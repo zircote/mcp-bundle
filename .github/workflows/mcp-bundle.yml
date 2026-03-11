@@ -95,8 +95,8 @@ jobs:
       manifest-valid: ${{ steps.validate.outputs.valid }}
 
     steps:
-      # NOTE: Actions pinned to mutable @v4 tags. For higher supply-chain
-      # security, pin to commit SHAs. See SEC-007 in refactor report.
+      # NOTE: Actions are pinned to mutable @v4 tags. For higher
+      # supply-chain security, pin to full commit SHA digests.
       - name: Checkout repository
         uses: actions/checkout@v4
 

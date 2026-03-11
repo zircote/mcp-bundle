@@ -1925,6 +1925,27 @@ else
 		"README source-files description should mention it fails when no files match"
 fi
 
+# --- Final structural tests ---
+echo ""
+echo "-- Final structural tests --"
+
+# Structural: workflow SHA pin advisory does NOT contain internal tracker refs
+# Public comments should not reference internal report IDs or tracker names
+if ! grep -q 'SEC-\|refactor report' "$WORKFLOW"; then
+	pass "workflow SHA pin advisory has no internal tracker references (clean public comment)"
+else
+	fail "workflow SHA pin" \
+		"SHA pin comment contains internal tracker reference (SEC- or 'refactor report') — remove before publishing"
+fi
+
+# Structural: action.yml has a SHA pin note near upload-artifact
+if grep -B5 'upload-artifact@v4' "$ACTION" | grep -qi 'mutable\|SHA'; then
+	pass "action.yml has SHA pin note near upload-artifact step"
+else
+	fail "action.yml SHA pin" \
+		"missing SHA pin advisory near upload-artifact step"
+fi
+
 # ── Summary ──
 echo ""
 printf '\033[1;33m=== Results ===\033[0m\n'

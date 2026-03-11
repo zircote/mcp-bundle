@@ -183,6 +183,7 @@ runs:
         echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
         echo "$SHA256  $BUNDLE_FILE" > "${BUNDLE_FILE}.sha256"
 
+    # NOTE: Pinned to mutable @v4 tag; see workflow for SHA guidance.
     - name: Upload bundle artifact
       if: inputs.upload-artifact == 'true'
       uses: actions/upload-artifact@v4

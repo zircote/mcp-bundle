@@ -165,6 +165,7 @@ See the [`examples/`](examples/) directory for complete caller workflow files:
 - [`minimal-caller.yml`](examples/minimal-caller.yml) — bare minimum
 - [`standard-caller.yml`](examples/standard-caller.yml) — with config files and Node.js 20
 - [`advanced-caller.yml`](examples/advanced-caller.yml) — with release assets and custom build
+- [`binary-caller.yml`](examples/binary-caller.yml) — pre-compiled binary server packaging
 
 ## Bundle Structure
 
