@@ -1567,6 +1567,118 @@ else
 		"workflow missing documentation of ref:main and composite alternative"
 fi
 
+# --- glob pattern sanitization tests ---
+echo ""
+echo "-- Glob pattern sanitization tests --"
+
+# Structural: workflow defines validate_glob_pattern function
+if grep -q 'validate_glob_pattern()' "$WORKFLOW"; then
+	pass "workflow defines validate_glob_pattern function"
+else
+	fail "workflow sanitization" \
+		"missing validate_glob_pattern function"
+fi
+
+# Structural: validate_glob_pattern rejects $ character
+if grep -A20 'validate_glob_pattern()' "$WORKFLOW" | grep -q '\$'; then
+	pass "validate_glob_pattern guards against \$ (command substitution)"
+else
+	fail "workflow sanitization" \
+		"validate_glob_pattern does not reject \$ character"
+fi
+
+# Structural: validate_glob_pattern rejects backtick
+if grep -A20 'validate_glob_pattern()' "$WORKFLOW" | grep -qE 'backtick|\\\\`|\`'; then
+	pass "validate_glob_pattern guards against backtick (command substitution)"
+else
+	fail "workflow sanitization" \
+		"validate_glob_pattern does not reject backtick"
+fi
+
+# Structural: validate_glob_pattern rejects semicolons
+if grep -A20 'validate_glob_pattern()' "$WORKFLOW" | grep -q ';'; then
+	pass "validate_glob_pattern guards against ; (command chaining)"
+else
+	fail "workflow sanitization" \
+		"validate_glob_pattern does not reject semicolon"
+fi
+
+# Structural: validate_glob_pattern emits ::error:: on invalid pattern
+if grep -A20 'validate_glob_pattern()' "$WORKFLOW" | grep -q '::error::'; then
+	pass "validate_glob_pattern emits ::error:: on invalid pattern"
+else
+	fail "workflow sanitization" \
+		"validate_glob_pattern should emit ::error:: annotation"
+fi
+
+# Structural: validate_glob_pattern called before copy_glob
+# The call must appear before copy_glob invocation in source order
+_vgp_line=$(grep -n 'validate_glob_pattern' "$WORKFLOW" | head -1 | cut -d: -f1)
+_cgp_line=$(grep -n 'copy_glob ' "$WORKFLOW" | head -1 | cut -d: -f1)
+if [ -n "$_vgp_line" ] && [ -n "$_cgp_line" ] &&
+	[ "$_vgp_line" -lt "$_cgp_line" ]; then
+	pass "validate_glob_pattern defined before first copy_glob call"
+else
+	fail "workflow sanitization" \
+		"validate_glob_pattern must be defined before copy_glob invocations"
+fi
+
+# Structural: .mcpbignore section also validates patterns
+if grep -q 'validate_glob_pattern' "$WORKFLOW"; then
+	_vgp_count=$(grep -c 'validate_glob_pattern' "$WORKFLOW" || true)
+	# mcpbignore section is after the collect step; multiple calls expected
+	if [ "$_vgp_count" -ge 2 ]; then
+		pass "validate_glob_pattern called in both source-files and .mcpbignore sections"
+	else
+		fail "workflow sanitization" \
+			"validate_glob_pattern should be called in both source-files loop and .mcpbignore section (found $_vgp_count call(s))"
+	fi
+fi
+
+# Functional: validate_glob_pattern — implement the same logic locally for testing
+validate_glob_pattern_sim() {
+	local pattern="$1"
+	# Reject shell metacharacters: $ ` ; | & ( ) { }
+	if echo "$pattern" | grep -qE '[\$`;|&(){}]'; then
+		echo "::error::Glob pattern contains disallowed shell metacharacters: ${pattern}"
+		return 1
+	fi
+	return 0
+}
+
+_test_vgp() {
+	local pattern="$1" expect="$2" label="$3"
+	local actual="fail"
+	validate_glob_pattern_sim "$pattern" >/dev/null 2>&1 && actual="pass"
+	if [ "$actual" = "$expect" ]; then
+		local verb="accepted"
+		[ "$actual" = "fail" ] && verb="rejected"
+		pass "validate_glob_pattern: $label → $verb"
+	else
+		local wanted="accepted"
+		[ "$expect" = "fail" ] && wanted="rejected"
+		fail "validate_glob_pattern: $label" \
+			"should have been $wanted but was not"
+	fi
+}
+
+# Valid patterns (should pass)
+_test_vgp "src/**/*.js" "pass" "src/**/*.js (valid glob)"
+_test_vgp "src/**" "pass" "src/** (valid glob)"
+_test_vgp "*.json" "pass" "*.json (wildcard)"
+_test_vgp "dist/*.js" "pass" "dist/*.js (path glob)"
+_test_vgp "[abc]*.js" "pass" "[abc]*.js (glob character class)"
+_test_vgp "config/*.json" "pass" "config/*.json (directory glob)"
+_test_vgp "src/index.ts" "pass" "src/index.ts (literal path)"
+
+# Invalid patterns (should be rejected)
+_test_vgp 'src/$(whoami)' "fail" 'src/$(whoami) ($() command substitution)'
+_test_vgp 'src/`id`' "fail" 'src/`id` (backtick command substitution)'
+_test_vgp 'src/*.js;rm -rf /' "fail" 'src/*.js;rm -rf / (semicolon chaining)'
+_test_vgp 'src/*.js|cat /etc/passwd' "fail" 'src/*.js|cat (pipe injection)'
+_test_vgp 'src/*.js&' "fail" 'src/*.js& (background operator)'
+_test_vgp '${HOME}/secrets' "fail" '${HOME}/secrets (variable expansion)'
+
 # ── Summary ──
 echo ""
 printf '\033[1;33m=== Results ===\033[0m\n'

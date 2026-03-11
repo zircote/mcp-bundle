@@ -196,6 +196,16 @@ jobs:
 
           cp "$MANIFEST" "$STAGING/manifest.json"
 
+          # validate_glob_pattern <pat> — rejects shell metacharacters ($ ` ; | & ( ) { }).
+          validate_glob_pattern() {
+            local pat="$1"
+            if [[ "$pat" =~ [\$\`\;\|\&\(\)\{\}] ]]; then
+              echo "::error::Unsafe glob pattern rejected (contains shell metacharacters): ${pat}" >&2
+              return 1
+            fi
+            return 0
+          }
+
           # copy_glob <pattern> <dest> — prints match count to stdout.
           copy_glob() {
             local pattern="$1" dest="$2" matched=0
@@ -218,6 +228,7 @@ jobs:
           for pat in "${SRCS[@]}"; do
             pat=$(echo "$pat" | xargs)
             [ -z "$pat" ] && continue
+            validate_glob_pattern "$pat" || exit 1
             count=$(copy_glob "$pat" "$STAGING")
             TOTAL_SRC=$((TOTAL_SRC + count))
           done
@@ -231,6 +242,7 @@ jobs:
             for pat in "${CFGS[@]}"; do
               pat=$(echo "$pat" | xargs)
               [ -z "$pat" ] && continue
+              validate_glob_pattern "$pat" || exit 1
               copy_glob "$pat" "$STAGING" > /dev/null
             done
           fi
@@ -240,6 +252,7 @@ jobs:
             for pat in "${EXTRAS[@]}"; do
               pat=$(echo "$pat" | xargs)
               [ -z "$pat" ] && continue
+              validate_glob_pattern "$pat" || exit 1
               copy_glob "$pat" "$STAGING" > /dev/null
             done
           fi
@@ -291,6 +304,11 @@ jobs:
             [[ "$pattern" == \#* ]] && continue
             if [[ "$pattern" == \!* ]]; then
               echo "::warning::.mcpbignore negation pattern not supported (skipped): ${pattern}"
+              continue
+            fi
+            # Same metachar set as validate_glob_pattern (warn+skip, not error+exit)
+            if [[ "$pattern" =~ [\$\`\;\|\&\(\)\{\}] ]]; then
+              echo "::warning::.mcpbignore pattern contains shell metacharacters (skipped): ${pattern}"
               continue
             fi
             if [[ "$pattern" == */ ]]; then
