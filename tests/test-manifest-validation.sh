@@ -605,12 +605,12 @@ else
 		"entry_point should be warning"
 fi
 
-# workflow entry_point is still error
-if grep -q 'Entry point file not found' "$WORKFLOW"; then
-	pass "workflow entry_point is still error"
+# workflow entry_point is warning (consistent with action.yml)
+if grep -q '::warning::Entry point not found' "$WORKFLOW"; then
+	pass "workflow entry_point is warning"
 else
 	fail "workflow" \
-		"entry_point should remain error"
+		"entry_point should be warning"
 fi
 
 # ci.yml exists

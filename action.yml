@@ -14,10 +14,6 @@ inputs:
     description: Path to the bundle manifest.json
     required: false
     default: manifest.json
-  node-version:
-    description: Node.js version for build environment
-    required: false
-    default: '18'
   bundle-name:
     description: Override bundle output filename (defaults to name from manifest.json)
     required: false

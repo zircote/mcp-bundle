@@ -159,7 +159,7 @@ jobs:
 
           ENTRY=$(jq -r '.server.entry_point // empty' "$MANIFEST")
           if [ -n "$ENTRY" ] && [ ! -f "$ENTRY" ]; then
-            echo "::error::Entry point file not found: ${ENTRY}"
+            echo "::warning::Entry point not found: ${ENTRY} (expected if build produces it)"
           fi
 
           if ! ERRORS=$(validate_manifest "$MANIFEST"); then

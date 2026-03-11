@@ -130,7 +130,6 @@ The composite action bundles the entire working directory (you handle checkout, 
 | Input | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `manifest-path` | string | no | `manifest.json` | Path to manifest.json |
-| `node-version` | string | no | `"18"` | Node.js version for build environment |
 | `bundle-name` | string | no | `""` | Override bundle output filename |
 | `upload-artifact` | string | no | `"true"` | Upload bundle as GitHub Actions artifact |
 | `create-release-asset` | string | no | `"false"` | Attach bundle to GitHub Release (tag pushes only) |
@@ -153,7 +152,7 @@ Both the reusable workflow and composite action perform these 11 validation chec
 3. `version` is valid semver
 4. UV server type requires `manifest_version: "0.4"`
 5. `compatibility.platforms` values are valid (`darwin`, `win32`, `linux`)
-6. `server.entry_point` file exists (warning in composite action, error in reusable workflow)
+6. `server.entry_point` file exists (warning if missing, expected when build produces it)
 7. `user_config` field types are valid (`string`, `number`, `boolean`, `directory`, `file`)
 8. All `${user_config.*}` variable references have matching `user_config` entries
 9. No duplicate tool names in `tools` array

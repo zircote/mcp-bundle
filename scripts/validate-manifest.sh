@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # Shared manifest validation logic for MCPB bundles.
-# Used by action.yml (sourced via $GITHUB_ACTION_PATH).
-# The reusable workflow (.github/workflows/mcp-bundle.yml) keeps an inline
-# copy because it runs in the caller's repo context, not mcp-bundle's.
-# Keep this file in sync with the workflow's validate step.
+# Sourced by action.yml (via $GITHUB_ACTION_PATH) and the reusable workflow
+# (via a sparse checkout of this repo).
 #
 # Usage:
 #   source scripts/validate-manifest.sh
