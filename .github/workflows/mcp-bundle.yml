@@ -85,13 +85,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Detect server type
+        id: detect
+        env:
+          MANIFEST: ${{ inputs.manifest-path }}
+        run: |
+          SERVER_TYPE=$(jq -r '.server.type' "$MANIFEST")
+          echo "server-type=$SERVER_TYPE" >> "$GITHUB_OUTPUT"
+
       - name: Setup Node.js
+        if: steps.detect.outputs.server-type == 'node'
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
           cache: npm
 
       - name: Install dependencies
+        if: steps.detect.outputs.server-type == 'node'
         run: npm ci --ignore-scripts || npm install --ignore-scripts
 
       - name: Run build command
@@ -198,6 +208,7 @@ jobs:
           echo "valid=true" >> "$GITHUB_OUTPUT"
 
       - name: Install mcpb CLI
+        if: steps.detect.outputs.server-type == 'node'
         env:
           MCPB_VER: ${{ inputs.mcpb-version }}
         run: |
@@ -214,6 +225,7 @@ jobs:
           CONFIG_FILES: ${{ inputs.config-files }}
           EXTRA_FILES: ${{ inputs.additional-artifacts }}
           MANIFEST: ${{ inputs.manifest-path }}
+          SERVER_TYPE: ${{ steps.detect.outputs.server-type }}
         run: |
           STAGING=$(mktemp -d)
           echo "staging-dir=$STAGING" >> "$GITHUB_OUTPUT"
@@ -251,8 +263,12 @@ jobs:
             done
           fi
 
-          [ -f "package.json" ] && cp package.json "$STAGING/"
-          [ -d "node_modules" ] && cp -r node_modules "$STAGING/"
+          if [ -f "package.json" ] && [ "$SERVER_TYPE" = "node" ]; then
+            cp package.json "$STAGING/"
+          fi
+          if [ -d "node_modules" ] && [ "$SERVER_TYPE" = "node" ]; then
+            cp -r node_modules "$STAGING/"
+          fi
 
           ICON=$(jq -r '.icon // empty' "$MANIFEST")
           if [ -n "$ICON" ] && [ -f "$ICON" ]; then
