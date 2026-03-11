@@ -1,0 +1,223 @@
+# yamllint disable rule:line-length
+---
+name: MCP Bundle Packager
+description: Package MCP server projects into MCPB (MCP Bundle) archives with manifest validation, checksums, and release asset support.
+author: zircote
+
+branding:
+  icon: package
+  color: orange
+
+inputs:
+  source-files:
+    description: Glob pattern(s) for MCP server source files to include in the bundle
+    required: true
+    default: src/**
+  manifest-path:
+    description: Path to the bundle manifest.json
+    required: false
+    default: manifest.json
+  config-files:
+    description: Glob pattern(s) for configuration files to include (e.g., config/*.json)
+    required: false
+    default: ''
+  additional-artifacts:
+    description: Glob pattern(s) for extra files to bundle (assets, schemas, templates, etc.)
+    required: false
+    default: ''
+  node-version:
+    description: Node.js version for build environment
+    required: false
+    default: '18'
+  build-command:
+    description: Custom build command to run before packaging
+    required: false
+    default: npm run build
+  test-command:
+    description: Custom test command to run before packaging; set to empty string to skip
+    required: false
+    default: npm test
+  bundle-name:
+    description: Override bundle output filename (defaults to name from manifest.json)
+    required: false
+    default: ''
+  upload-artifact:
+    description: Whether to upload the bundle as a GitHub Actions artifact
+    required: false
+    default: 'true'
+  create-release-asset:
+    description: Whether to attach the bundle to a GitHub Release (only on tag pushes)
+    required: false
+    default: 'false'
+  mcpb-version:
+    description: Version of mcpb toolchain to use
+    required: false
+    default: latest
+
+outputs:
+  bundle-path:
+    description: Path to the generated bundle file
+    value: ${{ steps.pack.outputs.bundle-path }}
+  bundle-sha256:
+    description: SHA-256 checksum of the bundle for integrity verification
+    value: ${{ steps.checksum.outputs.sha256 }}
+  manifest-valid:
+    description: Whether manifest validation passed (true/false)
+    value: ${{ steps.validate.outputs.valid }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate manifest.json
+      id: validate
+      shell: bash
+      env:
+        MANIFEST: ${{ inputs.manifest-path }}
+      run: |
+        if [ ! -f "$MANIFEST" ]; then
+          echo "::error::Manifest file not found: $MANIFEST"
+          echo "valid=false" >> "$GITHUB_OUTPUT"
+          exit 1
+        fi
+
+        ERRORS=""
+
+        check_field() {
+          local value
+          value=$(jq -r "$1 // empty" "$MANIFEST")
+          if [ -z "$value" ]; then
+            ERRORS+="Missing required field: $1\n"
+          fi
+        }
+
+        check_field '.manifest_version'
+        check_field '.name'
+        check_field '.version'
+        check_field '.description'
+        check_field '.author.name'
+        check_field '.server.type'
+        check_field '.server.entry_point'
+
+        SERVER_TYPE=$(jq -r '.server.type' "$MANIFEST")
+        case "$SERVER_TYPE" in
+          node|python|binary|uv) ;;
+          *) ERRORS+="Invalid server type: ${SERVER_TYPE}\n" ;;
+        esac
+
+        VERSION=$(jq -r '.version' "$MANIFEST")
+        if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?$'; then
+          ERRORS+="Invalid version (not semver): ${VERSION}\n"
+        fi
+
+        MANIFEST_VER=$(jq -r '.manifest_version' "$MANIFEST")
+        if [ "$SERVER_TYPE" = "uv" ] && [ "$MANIFEST_VER" != "0.4" ]; then
+          ERRORS+="UV server type requires manifest_version 0.4, got: ${MANIFEST_VER}\n"
+        fi
+
+        PLATFORMS=$(jq -r '.compatibility.platforms[]? // empty' "$MANIFEST" 2>/dev/null)
+        for p in $PLATFORMS; do
+          case "$p" in
+            darwin|win32|linux) ;;
+            *) ERRORS+="Invalid platform: ${p}\n" ;;
+          esac
+        done
+
+        ENTRY=$(jq -r '.server.entry_point' "$MANIFEST")
+        if [ -n "$ENTRY" ] && [ ! -f "$ENTRY" ]; then
+          ERRORS+="Entry point file not found: ${ENTRY}\n"
+        fi
+
+        CONFIG_TYPES=$(jq -r '.user_config // {} | to_entries[] | .value.type // empty' "$MANIFEST" 2>/dev/null || true)
+        for t in $CONFIG_TYPES; do
+          case "$t" in
+            string|number|boolean|directory|file) ;;
+            *) ERRORS+="Invalid user_config type: ${t}\n" ;;
+          esac
+        done
+
+        USED_VARS=$(jq -r '[.server.mcp_config.args[]?, (.server.mcp_config.env // {} | to_entries[] | .value)] | map(select(test("\\$\\{user_config\\."))) | map(capture("\\$\\{user_config\\.(?<key>[^}]+)\\}") | .key) | unique[]' "$MANIFEST" 2>/dev/null || true)
+        for var in $USED_VARS; do
+          HAS_CONFIG=$(jq -r ".user_config.\"$var\" // empty" "$MANIFEST")
+          if [ -z "$HAS_CONFIG" ]; then
+            ERRORS+="Variable \${user_config.${var}} referenced but not defined in user_config\n"
+          fi
+        done
+
+        DUPS=$(jq -r '[.tools[]?.name] | group_by(.) | map(select(length > 1)) | .[0][0] // empty' "$MANIFEST" 2>/dev/null)
+        if [ -n "$DUPS" ]; then
+          ERRORS+="Duplicate tool name: ${DUPS}\n"
+        fi
+
+        if [ -n "$ERRORS" ]; then
+          echo "::error::Manifest validation failed:"
+          printf "%b" "$ERRORS"
+          echo "valid=false" >> "$GITHUB_OUTPUT"
+          exit 1
+        fi
+
+        echo "valid=true" >> "$GITHUB_OUTPUT"
+
+    - name: Install mcpb CLI
+      shell: bash
+      env:
+        MCPB_VER: ${{ inputs.mcpb-version }}
+      run: |
+        if [ "$MCPB_VER" = "latest" ]; then
+          npm install -g @anthropic-ai/mcpb
+        else
+          npm install -g "@anthropic-ai/mcpb@${MCPB_VER}"
+        fi
+
+    - name: Package bundle
+      id: pack
+      shell: bash
+      env:
+        BUNDLE_NAME_INPUT: ${{ inputs.bundle-name }}
+        MANIFEST: ${{ inputs.manifest-path }}
+      run: |
+        if [ -n "$BUNDLE_NAME_INPUT" ]; then
+          BNAME="$BUNDLE_NAME_INPUT"
+        else
+          BNAME=$(jq -r '.name' "$MANIFEST")
+        fi
+
+        VERSION=$(jq -r '.version' "$MANIFEST")
+        BUNDLE_FILE="${BNAME}-${VERSION}.mcpb"
+
+        if command -v mcpb &>/dev/null; then
+          mcpb pack --output "$BUNDLE_FILE" || \
+            zip -r "$BUNDLE_FILE" . -x '*.git*' -x 'node_modules/*'
+        else
+          zip -r "$BUNDLE_FILE" . -x '*.git*' -x 'node_modules/*'
+        fi
+
+        echo "bundle-path=$BUNDLE_FILE" >> "$GITHUB_OUTPUT"
+
+    - name: Generate SHA-256 checksum
+      id: checksum
+      shell: bash
+      env:
+        BUNDLE_FILE: ${{ steps.pack.outputs.bundle-path }}
+      run: |
+        SHA256=$(sha256sum "$BUNDLE_FILE" | awk '{print $1}')
+        echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+        echo "$SHA256  $BUNDLE_FILE" > "${BUNDLE_FILE}.sha256"
+
+    - name: Upload bundle artifact
+      if: inputs.upload-artifact == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: mcpb-bundle
+        path: |
+          ${{ steps.pack.outputs.bundle-path }}
+          ${{ steps.pack.outputs.bundle-path }}.sha256
+
+    - name: Attach to GitHub Release
+      if: inputs.create-release-asset == 'true' && startsWith(github.ref, 'refs/tags/')
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        BUNDLE_FILE: ${{ steps.pack.outputs.bundle-path }}
+      run: |
+        TAG="${GITHUB_REF#refs/tags/}"
+        gh release upload "$TAG" "$BUNDLE_FILE" "${BUNDLE_FILE}.sha256" --clobber

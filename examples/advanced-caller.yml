@@ -1,0 +1,27 @@
+---
+# Advanced caller workflow
+# Includes config files, additional artifacts,
+# uses Node.js 20, and attaches bundles to
+# GitHub Releases on tag pushes.
+name: Package MCPB Bundle
+
+"on":
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  package:
+    uses: >-
+      zircote/mcp-bundle/.github/workflows/mcp-bundle.yml@v1
+    with:
+      source-files: "src/**"
+      config-files: "config/*.json,schemas/*.json"
+      additional-artifacts: "assets/**,templates/**"
+      node-version: "20"
+      build-command: "npm run build:prod"
+      test-command: "npm test"
+      upload-artifact: true
+      create-release-asset: true

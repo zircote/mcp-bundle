@@ -1,0 +1,326 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+# yamllint disable rule:line-length
+---
+name: MCP Bundle
+
+on:  # yamllint disable-line rule:truthy
+  workflow_call:
+    inputs:
+      source-files:
+        description: Glob pattern(s) for MCP server source files to include in the bundle
+        required: false
+        type: string
+        default: src/**
+      manifest-path:
+        description: Path to the bundle manifest.json
+        required: false
+        type: string
+        default: manifest.json
+      config-files:
+        description: Glob pattern(s) for configuration files to include (e.g., config/*.json)
+        required: false
+        type: string
+        default: ''
+      additional-artifacts:
+        description: Glob pattern(s) for extra files to bundle (assets, schemas, templates, etc.)
+        required: false
+        type: string
+        default: ''
+      node-version:
+        description: Node.js version for build environment
+        required: false
+        type: string
+        default: '18'
+      build-command:
+        description: Custom build command to run before packaging
+        required: false
+        type: string
+        default: npm run build
+      test-command:
+        description: Custom test command to run before packaging; set to empty string to skip
+        required: false
+        type: string
+        default: npm test
+      bundle-name:
+        description: Override bundle output filename (defaults to name from manifest.json)
+        required: false
+        type: string
+        default: ''
+      upload-artifact:
+        description: Whether to upload the bundle as a GitHub Actions artifact
+        required: false
+        type: boolean
+        default: true
+      create-release-asset:
+        description: Whether to attach the bundle to a GitHub Release (only on tag pushes)
+        required: false
+        type: boolean
+        default: false
+      mcpb-version:
+        description: Version of mcpb toolchain to use
+        required: false
+        type: string
+        default: latest
+    outputs:
+      bundle-path:
+        description: Path to the generated bundle file
+        value: ${{ jobs.package.outputs.bundle-path }}
+      bundle-sha256:
+        description: SHA-256 checksum of the bundle for integrity verification
+        value: ${{ jobs.package.outputs.bundle-sha256 }}
+      manifest-valid:
+        description: Whether manifest validation passed (true/false)
+        value: ${{ jobs.package.outputs.manifest-valid }}
+
+jobs:
+  package:
+    name: Package MCPB Bundle
+    runs-on: ubuntu-latest
+    outputs:
+      bundle-path: ${{ steps.pack.outputs.bundle-path }}
+      bundle-sha256: ${{ steps.checksum.outputs.sha256 }}
+      manifest-valid: ${{ steps.validate.outputs.valid }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts || npm install --ignore-scripts
+
+      - name: Run build command
+        if: inputs.build-command != ''
+        env:
+          BUILD_CMD: ${{ inputs.build-command }}
+        run: eval "$BUILD_CMD"
+
+      - name: Run test command
+        if: inputs.test-command != ''
+        env:
+          TEST_CMD: ${{ inputs.test-command }}
+        run: eval "$TEST_CMD"
+
+      - name: Validate manifest.json
+        id: validate
+        env:
+          MANIFEST: ${{ inputs.manifest-path }}
+        run: |
+          if [ ! -f "$MANIFEST" ]; then
+            echo "::error::Manifest file not found: $MANIFEST"
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          ERRORS=""
+
+          check_field() {
+            local value
+            value=$(jq -r "$1 // empty" "$MANIFEST")
+            if [ -z "$value" ]; then
+              ERRORS+="Missing required field: $1\n"
+            fi
+          }
+
+          check_field '.manifest_version'
+          check_field '.name'
+          check_field '.version'
+          check_field '.description'
+          check_field '.author.name'
+          check_field '.server.type'
+          check_field '.server.entry_point'
+
+          SERVER_TYPE=$(jq -r '.server.type' "$MANIFEST")
+          case "$SERVER_TYPE" in
+            node|python|binary|uv) ;;
+            *) ERRORS+="Invalid server type: ${SERVER_TYPE}\n" ;;
+          esac
+
+          VERSION=$(jq -r '.version' "$MANIFEST")
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?$'; then
+            ERRORS+="Invalid version (not semver): ${VERSION}\n"
+          fi
+
+          MANIFEST_VER=$(jq -r '.manifest_version' "$MANIFEST")
+          if [ "$SERVER_TYPE" = "uv" ] && [ "$MANIFEST_VER" != "0.4" ]; then
+            ERRORS+="UV server type requires manifest_version 0.4, got: ${MANIFEST_VER}\n"
+          fi
+
+          PLATFORMS=$(jq -r '.compatibility.platforms[]? // empty' "$MANIFEST" 2>/dev/null)
+          for p in $PLATFORMS; do
+            case "$p" in
+              darwin|win32|linux) ;;
+              *) ERRORS+="Invalid platform: ${p}\n" ;;
+            esac
+          done
+
+          ENTRY=$(jq -r '.server.entry_point' "$MANIFEST")
+          if [ -n "$ENTRY" ] && [ ! -f "$ENTRY" ]; then
+            ERRORS+="Entry point file not found: ${ENTRY}\n"
+          fi
+
+          CONFIG_TYPES=$(jq -r '.user_config // {} | to_entries[] | .value.type // empty' "$MANIFEST" 2>/dev/null || true)
+          for t in $CONFIG_TYPES; do
+            case "$t" in
+              string|number|boolean|directory|file) ;;
+              *) ERRORS+="Invalid user_config type: ${t}\n" ;;
+            esac
+          done
+
+          USED_VARS=$(jq -r '[.server.mcp_config.args[]?, (.server.mcp_config.env // {} | to_entries[] | .value)] | map(select(test("\\$\\{user_config\\."))) | map(capture("\\$\\{user_config\\.(?<key>[^}]+)\\}") | .key) | unique[]' "$MANIFEST" 2>/dev/null || true)
+          for var in $USED_VARS; do
+            HAS_CONFIG=$(jq -r ".user_config.\"$var\" // empty" "$MANIFEST")
+            if [ -z "$HAS_CONFIG" ]; then
+              ERRORS+="Variable \${user_config.${var}} referenced but not defined in user_config\n"
+            fi
+          done
+
+          DUPS=$(jq -r '[.tools[]?.name] | group_by(.) | map(select(length > 1)) | .[0][0] // empty' "$MANIFEST" 2>/dev/null)
+          if [ -n "$DUPS" ]; then
+            ERRORS+="Duplicate tool name: ${DUPS}\n"
+          fi
+
+          if [ -n "$ERRORS" ]; then
+            echo "::error::Manifest validation failed:"
+            printf "%b" "$ERRORS" | while IFS= read -r line; do
+              echo "::error::  $line"
+            done
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          echo "Manifest validation passed"
+          echo "valid=true" >> "$GITHUB_OUTPUT"
+
+      - name: Install mcpb CLI
+        env:
+          MCPB_VER: ${{ inputs.mcpb-version }}
+        run: |
+          if [ "$MCPB_VER" = "latest" ]; then
+            npm install -g @anthropic-ai/mcpb
+          else
+            npm install -g "@anthropic-ai/mcpb@${MCPB_VER}"
+          fi
+
+      - name: Collect bundle files
+        id: collect
+        env:
+          SOURCE_FILES: ${{ inputs.source-files }}
+          CONFIG_FILES: ${{ inputs.config-files }}
+          EXTRA_FILES: ${{ inputs.additional-artifacts }}
+          MANIFEST: ${{ inputs.manifest-path }}
+        run: |
+          STAGING=$(mktemp -d)
+          echo "staging-dir=$STAGING" >> "$GITHUB_OUTPUT"
+
+          cp "$MANIFEST" "$STAGING/manifest.json"
+
+          copy_glob() {
+            local pattern dest
+            pattern=$(echo "$1" | xargs)
+            dest="$2"
+            eval "for f in $pattern; do
+              if [ -f \"\$f\" ]; then
+                mkdir -p \"$dest/\$(dirname \"\$f\")\"
+                cp \"\$f\" \"$dest/\$f\"
+              fi
+            done"
+          }
+
+          IFS=',' read -ra SRCS <<< "$SOURCE_FILES"
+          for pat in "${SRCS[@]}"; do
+            copy_glob "$pat" "$STAGING"
+          done
+
+          if [ -n "$CONFIG_FILES" ]; then
+            IFS=',' read -ra CFGS <<< "$CONFIG_FILES"
+            for pat in "${CFGS[@]}"; do
+              copy_glob "$pat" "$STAGING"
+            done
+          fi
+
+          if [ -n "$EXTRA_FILES" ]; then
+            IFS=',' read -ra EXTRAS <<< "$EXTRA_FILES"
+            for pat in "${EXTRAS[@]}"; do
+              copy_glob "$pat" "$STAGING"
+            done
+          fi
+
+          [ -f "package.json" ] && cp package.json "$STAGING/"
+          [ -d "node_modules" ] && cp -r node_modules "$STAGING/"
+
+          ICON=$(jq -r '.icon // empty' "$MANIFEST")
+          if [ -n "$ICON" ] && [ -f "$ICON" ]; then
+            cp "$ICON" "$STAGING/"
+          fi
+
+          echo "Files staged for bundling:"
+          find "$STAGING" -type f | head -50
+
+      - name: Package bundle
+        id: pack
+        env:
+          STAGING: ${{ steps.collect.outputs.staging-dir }}
+          BUNDLE_NAME_INPUT: ${{ inputs.bundle-name }}
+          MANIFEST: ${{ inputs.manifest-path }}
+        run: |
+          if [ -n "$BUNDLE_NAME_INPUT" ]; then
+            BNAME="$BUNDLE_NAME_INPUT"
+          else
+            BNAME=$(jq -r '.name' "$MANIFEST")
+          fi
+
+          VERSION=$(jq -r '.version' "$MANIFEST")
+          BUNDLE_FILE="${BNAME}-${VERSION}.mcpb"
+
+          cd "$STAGING"
+          if command -v mcpb &>/dev/null; then
+            mcpb pack --output "$GITHUB_WORKSPACE/$BUNDLE_FILE" || \
+              zip -r "$GITHUB_WORKSPACE/$BUNDLE_FILE" . -x '*.git*'
+          else
+            zip -r "$GITHUB_WORKSPACE/$BUNDLE_FILE" . -x '*.git*'
+          fi
+
+          cd "$GITHUB_WORKSPACE"
+          echo "bundle-path=$BUNDLE_FILE" >> "$GITHUB_OUTPUT"
+          echo "Bundle created: $BUNDLE_FILE ($(du -h "$BUNDLE_FILE" | cut -f1))"
+
+      - name: Generate SHA-256 checksum
+        id: checksum
+        env:
+          BUNDLE_FILE: ${{ steps.pack.outputs.bundle-path }}
+        run: |
+          SHA256=$(sha256sum "$BUNDLE_FILE" | awk '{print $1}')
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          echo "$SHA256  $BUNDLE_FILE" > "${BUNDLE_FILE}.sha256"
+          echo "SHA-256: $SHA256"
+
+      - name: Upload bundle artifact
+        if: inputs.upload-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcpb-bundle
+          path: |
+            ${{ steps.pack.outputs.bundle-path }}
+            ${{ steps.pack.outputs.bundle-path }}.sha256
+
+      - name: Attach to GitHub Release
+        if: inputs.create-release-asset && startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLE_FILE: ${{ steps.pack.outputs.bundle-path }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          gh release upload "$TAG" "$BUNDLE_FILE" "${BUNDLE_FILE}.sha256" --clobber
+          echo "Attached $BUNDLE_FILE to release $TAG"
+
+      - name: Cleanup staging directory
+        if: always()
+        env:
+          STAGING: ${{ steps.collect.outputs.staging-dir }}
+        run: rm -rf "$STAGING"

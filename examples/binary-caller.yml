@@ -1,0 +1,22 @@
+---
+# Binary server caller workflow
+# Packages a pre-compiled binary MCP server.
+# Skips npm build/test since this is not a Node.js
+# project — build and test are handled separately.
+name: Package MCP Bundle (Binary)
+
+"on":
+  push:
+    branches: [main]
+    tags: ['v*']
+
+jobs:
+  package:
+    uses: >-
+      zircote/mcp-bundle/.github/workflows/mcp-bundle.yml@v1
+    with:
+      source-files: "server/*"
+      build-command: ""
+      test-command: ""
+      upload-artifact: true
+      create-release-asset: true

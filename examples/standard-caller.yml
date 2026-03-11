@@ -1,0 +1,23 @@
+---
+# Standard caller workflow
+# Includes config files and uses Node.js 20.
+name: Package MCPB Bundle
+
+"on":
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  package:
+    uses: >-
+      zircote/mcp-bundle/.github/workflows/mcp-bundle.yml@v1
+    with:
+      source-files: "src/**"
+      config-files: "config/*.json"
+      node-version: "20"
+      build-command: "npm run build"
+      test-command: "npm test"
+      upload-artifact: true
