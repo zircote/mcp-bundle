@@ -35,7 +35,7 @@ Run the test suite:
 ./tests/test-manifest-validation.sh
 ```
 
-Requires: `bash` 4+, `jq`. Tests validate manifest parsing, required fields, validation rules, workflow/action structure, skill content, and example presence. All 160 tests must pass before committing.
+Requires: `bash` 4+, `jq`. Tests validate manifest parsing, required fields, validation rules, workflow/action structure, skill content, and example presence. All 192 tests must pass before committing.
 
 Test fixtures live in `tests/fixtures/` — add new `.json` fixtures there for additional validation test cases.
 

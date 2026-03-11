@@ -297,7 +297,7 @@ on:
 
 jobs:
   package:
-    uses: zircote/mcp-bundle/.github/workflows/mcp-bundle.yml@main  # pin to @v1 when released
+    uses: zircote/mcp-bundle/.github/workflows/mcp-bundle.yml@v1
     with:
       source-files: "<detected-source-glob>"
       manifest-path: "manifest.json"

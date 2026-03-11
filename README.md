@@ -58,8 +58,6 @@ jobs:
           node-version: '20'
       - run: npm ci && npm run build && npm test
       - uses: zircote/mcp-bundle@v1
-        with:
-          source-files: "src/**"
 ```
 
 ### Reusable Workflow vs. Composite Action
@@ -69,7 +67,8 @@ jobs:
 | Usage | `uses:` at **job level** | `uses:` at **step level** |
 | Checkout & setup | Handled automatically | You handle in prior steps |
 | Build & test | Configurable via inputs | You handle in prior steps |
-| Manifest validation | Full (10 checks) | Full (10 checks) |
+| File selection | Via `source-files`, `config-files`, `additional-artifacts` inputs | Bundles working directory; use `.mcpbignore` to exclude |
+| Manifest validation | Full (11 checks) | Full (11 checks) |
 | Bundle packaging | Yes | Yes |
 | SHA-256 checksum | Yes | Yes |
 | Artifact upload | Yes | Yes |
@@ -200,7 +199,7 @@ The reusable workflow applies exclusions by pruning from the staging directory b
 
 ## Security Considerations
 
-> **Note:** The reusable workflow uses `eval` to execute user-provided `build-command` and `test-command` inputs. These values come from `workflow_call` inputs (set by the calling workflow author, not by PR authors or external contributors), so they are not attacker-controlled in normal usage. However, avoid passing untrusted values through these inputs.
+> **Note:** The reusable workflow uses `bash -c` to execute user-provided `build-command` and `test-command` inputs. These values are passed via environment variables (not interpolated directly into shell), so they are not subject to YAML injection. However, they come from `workflow_call` inputs (set by the calling workflow author), so avoid passing untrusted values through these inputs.
 
 ## License
 
