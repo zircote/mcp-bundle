@@ -92,7 +92,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Checkout mcp-bundle action scripts
-        # mirrors scripts/validate-manifest.sh
+        # mirrors scripts/validate-manifest.sh from main via sparse checkout;
+        # callers get updated validation automatically. For frozen/pinned
+        # validation, use the composite action instead.
         uses: actions/checkout@v4
         with:
           repository: zircote/mcp-bundle
@@ -148,12 +150,6 @@ jobs:
         env:
           MANIFEST: ${{ inputs.manifest-path }}
         run: |
-          if [ ! -f "$MANIFEST" ]; then
-            echo "::error::Manifest file not found: $MANIFEST"
-            echo "valid=false" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-
           # shellcheck source=.mcp-bundle-action/scripts/validate-manifest.sh
           source "$GITHUB_WORKSPACE/.mcp-bundle-action/scripts/validate-manifest.sh"
 
@@ -200,6 +196,7 @@ jobs:
 
           cp "$MANIFEST" "$STAGING/manifest.json"
 
+          # copy_glob <pattern> <dest> — prints match count to stdout.
           copy_glob() {
             local pattern="$1" dest="$2" matched=0
             for f in $pattern; do
@@ -210,23 +207,31 @@ jobs:
               matched=$((matched + 1))
             done
             if [ "$matched" -eq 0 ]; then
-              echo "::warning::No files matched pattern: ${pattern}"
+              echo "::warning::No files matched glob: ${pattern}" \
+                "(cwd: $(pwd) — verify source-files/config-files input)" >&2
             fi
+            echo "$matched"
           }
 
+          TOTAL_SRC=0
           IFS=',' read -ra SRCS <<< "$SOURCE_FILES"
           for pat in "${SRCS[@]}"; do
             pat=$(echo "$pat" | xargs)
             [ -z "$pat" ] && continue
-            copy_glob "$pat" "$STAGING"
+            count=$(copy_glob "$pat" "$STAGING")
+            TOTAL_SRC=$((TOTAL_SRC + count))
           done
+          if [ "$TOTAL_SRC" -eq 0 ]; then
+            echo "::error::No source files matched any SOURCE_FILES pattern(s): ${SOURCE_FILES}"
+            exit 1
+          fi
 
           if [ -n "$CONFIG_FILES" ]; then
             IFS=',' read -ra CFGS <<< "$CONFIG_FILES"
             for pat in "${CFGS[@]}"; do
               pat=$(echo "$pat" | xargs)
               [ -z "$pat" ] && continue
-              copy_glob "$pat" "$STAGING"
+              copy_glob "$pat" "$STAGING" > /dev/null
             done
           fi
 
@@ -235,7 +240,7 @@ jobs:
             for pat in "${EXTRAS[@]}"; do
               pat=$(echo "$pat" | xargs)
               [ -z "$pat" ] && continue
-              copy_glob "$pat" "$STAGING"
+              copy_glob "$pat" "$STAGING" > /dev/null
             done
           fi
 
@@ -281,7 +286,7 @@ jobs:
         run: |
           if [ ! -f ".mcpbignore" ]; then exit 0; fi
           while IFS= read -r pattern || [ -n "$pattern" ]; do
-            pattern=$(echo "$pattern" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+            pattern=$(echo "$pattern" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
             [ -z "$pattern" ] && continue
             [[ "$pattern" == \#* ]] && continue
             if [[ "$pattern" == \!* ]]; then

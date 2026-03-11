@@ -1440,6 +1440,133 @@ else
 		"skill missing idempotency constraint"
 fi
 
+# --- copy_glob() behavior tests ---
+echo ""
+echo "-- copy_glob() behavior tests --"
+
+# Structural: copy_glob emits ::warning:: on zero-match (not ::error::)
+if grep -q '::warning::No files matched glob' "$WORKFLOW"; then
+	pass "copy_glob emits ::warning:: on zero-match (not ::error::)"
+else
+	fail "copy_glob" \
+		"missing ::warning:: annotation for zero-match in copy_glob"
+fi
+
+# Structural: copy_glob zero-match message includes cwd diagnostic
+if grep -q 'cwd:.*pwd\|verify source-files' "$WORKFLOW"; then
+	pass "copy_glob zero-match warning includes cwd diagnostic"
+else
+	fail "copy_glob" \
+		"zero-match warning should include cwd and input hint for debugging"
+fi
+
+# Structural: workflow emits ::error:: when zero source files total (fail-fast)
+if grep -q '::error::.*source.*file\|::error::.*no.*source\|::error::.*No source' \
+	"$WORKFLOW"; then
+	pass "workflow emits ::error:: when zero source files matched (fail-fast)"
+else
+	fail "workflow copy_glob" \
+		"missing ::error:: fail-fast for zero total source files"
+fi
+
+# Functional: copy_glob zero-match emits warning and exits 0
+_CG_TEST_STAGING=$(mktemp -d)
+trap 'rm -rf "$_MCPB_SEMANTIC_STAGING" "$_MCPB_ZIP_TEST_DIR" "$_CG_TEST_STAGING"' EXIT
+
+copy_glob_sim() {
+	local pattern="$1" dest="$2" matched=0
+	shopt -s globstar
+	for f in $pattern; do
+		[ -f "$f" ] || continue
+		local rel="${f#./}"
+		mkdir -p "$dest/$(dirname "$rel")"
+		cp "$f" "$dest/$rel"
+		matched=$((matched + 1))
+	done
+	if [ "$matched" -eq 0 ]; then
+		echo "::warning::No files matched glob: ${pattern} (cwd: $(pwd) — verify source-files/config-files input)"
+	fi
+	return 0
+}
+
+_cg_warning=$(copy_glob_sim "nonexistent-dir-xyz/**" "$_CG_TEST_STAGING" 2>&1)
+_cg_exit=$?
+if [ "$_cg_exit" -eq 0 ]; then
+	pass "copy_glob functional: zero-match exits 0 (does not fail)"
+else
+	fail "copy_glob functional" \
+		"zero-match should exit 0 (got exit $_cg_exit)"
+fi
+
+if echo "$_cg_warning" | grep -q '::warning::No files matched glob'; then
+	pass "copy_glob functional: zero-match emits ::warning:: annotation"
+else
+	fail "copy_glob functional" \
+		"zero-match did not emit expected ::warning:: (got: $_cg_warning)"
+fi
+
+# Functional: copy_glob successful match copies file and exits 0
+_CG_SRC_DIR=$(mktemp -d)
+_CG_DST_DIR=$(mktemp -d)
+trap 'rm -rf "$_MCPB_SEMANTIC_STAGING" "$_MCPB_ZIP_TEST_DIR" "$_CG_TEST_STAGING" "$_CG_SRC_DIR" "$_CG_DST_DIR"' EXIT
+
+mkdir -p "$_CG_SRC_DIR/src"
+touch "$_CG_SRC_DIR/src/index.js"
+
+_cg_match_out=$(cd "$_CG_SRC_DIR" && copy_glob_sim "src/*.js" "$_CG_DST_DIR" 2>&1)
+_cg_match_exit=$?
+
+if [ "$_cg_match_exit" -eq 0 ]; then
+	pass "copy_glob functional: successful match exits 0"
+else
+	fail "copy_glob functional" \
+		"successful match should exit 0 (got exit $_cg_match_exit)"
+fi
+
+if [ -f "$_CG_DST_DIR/src/index.js" ]; then
+	pass "copy_glob functional: matched file copied to destination"
+else
+	fail "copy_glob functional" \
+		"matched file not found in destination after copy_glob"
+fi
+
+if ! echo "$_cg_match_out" | grep -q '::warning::'; then
+	pass "copy_glob functional: successful match emits no ::warning::"
+else
+	fail "copy_glob functional" \
+		"successful match should not emit ::warning:: (got: $_cg_match_out)"
+fi
+
+# --- ref:main sparse checkout documentation tests ---
+echo ""
+echo "-- ref:main sparse checkout documentation tests --"
+
+# Structural: workflow checkout step has intent comment explaining ref:main behavior
+if grep -q 'frozen\|pinned.*validation\|composite action' "$WORKFLOW"; then
+	pass "workflow ref:main checkout step has intent comment (frozen/pinned/composite)"
+else
+	fail "workflow ref:main" \
+		"checkout step missing intent comment explaining live-main vs. pinned behavior"
+fi
+
+# Structural: checkout comment mentions callers get updated validation automatically
+if grep -q 'automatically\|updated.*validation\|validation.*updated' "$WORKFLOW"; then
+	pass "workflow ref:main comment explains callers get updated validation automatically"
+else
+	fail "workflow ref:main" \
+		"checkout comment should explain automatic validation updates for callers"
+fi
+
+# Structural: README documents that reusable workflow pulls validate-manifest from main
+if grep -q 'main.*validate\|validate.*main\|pulls.*main\|from main\|ref.*main' \
+	"$WORKFLOW" &&
+	grep -q 'frozen\|pinned\|composite action' "$WORKFLOW"; then
+	pass "workflow documents ref:main and frozen/composite alternative"
+else
+	fail "workflow ref:main" \
+		"workflow missing documentation of ref:main and composite alternative"
+fi
+
 # ── Summary ──
 echo ""
 printf '\033[1;33m=== Results ===\033[0m\n'
