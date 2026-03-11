@@ -92,12 +92,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Checkout mcp-bundle action scripts
-        # Fetch scripts/validate-manifest.sh from the action repo so the reusable
-        # workflow sources the same canonical script as action.yml, eliminating
-        # the need to maintain an inline duplicate. mirrors scripts/validate-manifest.sh
+        # mirrors scripts/validate-manifest.sh
         uses: actions/checkout@v4
         with:
           repository: zircote/mcp-bundle
+          ref: main
           path: .mcp-bundle-action
           sparse-checkout: scripts/validate-manifest.sh
           sparse-checkout-cone-mode: false
@@ -148,9 +147,6 @@ jobs:
         id: validate
         env:
           MANIFEST: ${{ inputs.manifest-path }}
-        # Sources scripts/validate-manifest.sh from the mcp-bundle action repo
-        # checked out above — the canonical source of truth, no inline duplicate.
-        # mirrors scripts/validate-manifest.sh
         run: |
           if [ ! -f "$MANIFEST" ]; then
             echo "::error::Manifest file not found: $MANIFEST"
@@ -247,6 +243,10 @@ jobs:
             cp package.json "$STAGING/"
           fi
           if [ -d "node_modules" ] && [ "$SERVER_TYPE" = "node" ]; then
+            NM_MB=$(du -sm node_modules 2>/dev/null | cut -f1 || echo 0)
+            if [ "${NM_MB:-0}" -gt 50 ]; then
+              echo "::warning::node_modules is ${NM_MB}MB — consider running npm ci --omit=dev or using .mcpbignore to exclude dev dependencies before bundling"
+            fi
             cp -r node_modules "$STAGING/"
           fi
 
@@ -281,10 +281,6 @@ jobs:
           STAGING: ${{ steps.collect.outputs.staging-dir }}
         run: |
           if [ ! -f ".mcpbignore" ]; then exit 0; fi
-          # Path-relative matching (gitignore semantics):
-          #   - patterns with '/' match against the bundle-relative path
-          #   - patterns without '/' match against the basename only
-          #   - patterns ending with '/' remove the entire directory tree
           while IFS= read -r pattern || [ -n "$pattern" ]; do
             pattern=$(echo "$pattern" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
             [ -z "$pattern" ] && continue
@@ -292,20 +288,16 @@ jobs:
             if [[ "$pattern" == */ ]]; then
               dirpat="${pattern%/}"
               if [[ "$dirpat" == */* ]]; then
-                # Path-relative dir (e.g. build/tmp/): match by relative path
                 find "$STAGING" -type d -path "*/${dirpat}" \
                   -exec rm -rf {} + 2>/dev/null || true
               else
-                # Basename-only dir (e.g. __pycache__/): match by name
                 find "$STAGING" -type d -name "${dirpat}" \
                   -exec rm -rf {} + 2>/dev/null || true
               fi
             elif [[ "$pattern" == */* ]]; then
-              # Path-relative file (e.g. dist/debug.log): match by relative path
               find "$STAGING" -path "*/${pattern}" \
                 -exec rm -rf {} + 2>/dev/null || true
             else
-              # Basename pattern (e.g. *.log): match by filename only
               find "$STAGING" -name "$pattern" \
                 -exec rm -rf {} + 2>/dev/null || true
             fi
@@ -343,8 +335,7 @@ jobs:
 
           cd "$GITHUB_WORKSPACE"
 
-          # Validate bundle structure (applies whether mcpb or zip produced it).
-          # Catches cases where zip fallback silently omits required files.
+          # Validate bundle structure
           BUNDLE_CONTENTS=$(unzip -Z1 "$BUNDLE_FILE" 2>/dev/null || true)
           if ! echo "$BUNDLE_CONTENTS" | grep -q '^manifest\.json$'; then
             echo "::error::Bundle missing manifest.json — archive may be malformed"

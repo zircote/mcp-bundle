@@ -304,6 +304,27 @@ if [ -f "$ACTION" ]; then
 	done
 fi
 
+# action.yml must NOT define source-files, config-files, or additional-artifacts
+# (those inputs are silently ignored — the action bundles the entire working dir)
+if [ -f "$ACTION" ]; then
+	for removed_input in source-files config-files additional-artifacts; do
+		if ! grep -q "^  ${removed_input}:" "$ACTION"; then
+			pass "action.yml does not expose ${removed_input} (not applicable to PWD bundling)"
+		else
+			fail "action.yml" \
+				"${removed_input} still defined — it is silently ignored and should be removed"
+		fi
+	done
+	# action.yml must document bundling strategy
+	if grep -qi 'bundles.*working dir\|source-files.*not.*applicable\|does not accept' \
+		"$ACTION"; then
+		pass "action.yml documents bundling strategy"
+	else
+		fail "action.yml" \
+			"missing comment documenting bundling strategy"
+	fi
+fi
+
 # --- Shared validation script tests ---
 echo ""
 echo "-- Shared validation script tests --"
@@ -359,6 +380,14 @@ if [ -f "$VALIDATE_SCRIPT" ] && [ -f "$WORKFLOW" ]; then
 	else
 		fail "drift-prevention" \
 			"missing sparse-checkout-cone-mode: false — file-level sparse checkout won't work"
+	fi
+
+	# Workflow pins sparse checkout to ref: main
+	if grep -q 'ref: main' "$WORKFLOW"; then
+		pass "workflow sparse checkout pinned to ref: main"
+	else
+		fail "drift-prevention" \
+			"workflow sparse checkout missing ref: main — may pull wrong branch"
 	fi
 
 	# Workflow places checkout at .mcp-bundle-action path
@@ -1012,6 +1041,22 @@ if grep -q 'SERVER_TYPE.*node\|node.*SERVER_TYPE' "$WORKFLOW" &&
 else
 	fail "workflow capability" \
 		"node_modules not conditionally included for node type"
+fi
+
+# workflow warns when node_modules exceeds size threshold before bundling
+if grep -q 'node_modules.*MB\|NM_MB' "$WORKFLOW"; then
+	pass "workflow emits node_modules size warning before bundling"
+else
+	fail "workflow capability" \
+		"missing node_modules size warning in collect step"
+fi
+
+# warning threshold is >50MB (reasonable for production bundles)
+if grep -q '50' "$WORKFLOW" && grep -q 'NM_MB\|node_modules.*MB' "$WORKFLOW"; then
+	pass "workflow node_modules size warning threshold is 50MB"
+else
+	fail "workflow capability" \
+		"node_modules size warning threshold not set to 50MB"
 fi
 
 # --- Capability: icon.png support ---

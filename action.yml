@@ -9,22 +9,11 @@ branding:
   color: orange
 
 inputs:
-  source-files:
-    description: Glob pattern(s) for MCP server source files to include in the bundle
-    required: true
-    default: src/**
+  # Bundles the working directory via mcpb or zip; use .mcpbignore to exclude files.
   manifest-path:
     description: Path to the bundle manifest.json
     required: false
     default: manifest.json
-  config-files:
-    description: Glob pattern(s) for configuration files to include (e.g., config/*.json)
-    required: false
-    default: ''
-  additional-artifacts:
-    description: Glob pattern(s) for extra files to bundle (assets, schemas, templates, etc.)
-    required: false
-    default: ''
   node-version:
     description: Node.js version for build environment
     required: false
