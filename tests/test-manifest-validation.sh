@@ -334,148 +334,83 @@ else
 	fail "scripts/validate-manifest.sh" "file not found"
 fi
 
-# --- Validation sync drift-detection tests ---
-# Verify that the workflow's inline validate step and scripts/validate-manifest.sh
-# stay in sync by checking that identical validation rules exist in both files.
+# --- Validation sync drift-prevention tests ---
+# The workflow now sources the canonical scripts/validate-manifest.sh via a
+# checkout of zircote/mcp-bundle, eliminating inline duplication entirely.
+# These tests verify the architecture that prevents drift.
 echo ""
-echo "-- Validation sync drift-detection tests --"
+echo "-- Validation sync drift-prevention tests --"
 
 VALIDATE_SCRIPT="$SCRIPT_DIR/../scripts/validate-manifest.sh"
 
 if [ -f "$VALIDATE_SCRIPT" ] && [ -f "$WORKFLOW" ]; then
 
-	# Required fields: same set checked in both files
-	# Script uses single-quotes: _check_field '.manifest_version'
-	# Workflow uses single-quotes: check_field '.manifest_version'
-	for field in \
-		'.manifest_version' '.name' '.version' \
-		'.description' '.author.name' \
-		'.server.type' '.server.entry_point'; do
-		in_script=$(grep -c "$field" "$VALIDATE_SCRIPT" || true)
-		in_workflow=$(grep -c "$field" "$WORKFLOW" || true)
-		if [ "$in_script" -ge 1 ] && [ "$in_workflow" -ge 1 ]; then
-			pass "both files check required field: $field"
-		elif [ "$in_script" -lt 1 ]; then
-			fail "drift: required field $field" \
-				"missing from scripts/validate-manifest.sh"
+	# Workflow checks out mcp-bundle repo for the validation script
+	if grep -q 'repository: zircote/mcp-bundle' "$WORKFLOW"; then
+		pass "workflow checks out mcp-bundle repo for validation script"
+	else
+		fail "drift-prevention" \
+			"workflow missing checkout of zircote/mcp-bundle"
+	fi
+
+	# Workflow sparse-checkouts only the validation script
+	if grep -q 'sparse-checkout.*validate-manifest' "$WORKFLOW"; then
+		pass "workflow sparse-checkouts validate-manifest.sh"
+	else
+		fail "drift-prevention" \
+			"workflow missing sparse-checkout of validate-manifest.sh"
+	fi
+
+	# Workflow sources the checked-out script (not an inline copy)
+	if grep -q 'source.*mcp-bundle-action.*validate-manifest' "$WORKFLOW"; then
+		pass "workflow sources validate-manifest.sh from checked-out repo"
+	else
+		fail "drift-prevention" \
+			"workflow does not source validate-manifest.sh from checkout"
+	fi
+
+	# Workflow calls validate_manifest function (from the sourced script)
+	if grep -q 'validate_manifest' "$WORKFLOW"; then
+		pass "workflow calls validate_manifest function"
+	else
+		fail "drift-prevention" \
+			"workflow missing validate_manifest function call"
+	fi
+
+	# Workflow does NOT contain inline check_field (no duplication)
+	inline_check_field=$(grep -c 'check_field ' "$WORKFLOW" || true)
+	if [ "$inline_check_field" -eq 0 ]; then
+		pass "workflow has no inline check_field (drift eliminated)"
+	else
+		fail "drift-prevention" \
+			"workflow still has inline check_field ($inline_check_field occurrences)"
+	fi
+
+	# action.yml also sources the canonical script
+	if grep -q 'source.*validate-manifest' "$ACTION"; then
+		pass "action.yml sources scripts/validate-manifest.sh"
+	else
+		fail "drift-prevention" \
+			"action.yml does not source validate-manifest.sh"
+	fi
+
+	# Canonical script contains all required validation rules
+	for rule in \
+		'_check_field' 'Invalid server type' \
+		'Invalid version' 'manifest_version 0.4' \
+		'Invalid platform' 'Invalid user_config type' \
+		'user_config' 'Duplicate tool name' \
+		'Tool missing name or description'; do
+		if grep -q "$rule" "$VALIDATE_SCRIPT"; then
+			pass "canonical script contains rule: $rule"
 		else
-			fail "drift: required field $field" \
-				"missing from workflow validate step"
+			fail "canonical script" \
+				"missing validation rule: $rule"
 		fi
 	done
-
-	# check_field call count parity:
-	# script uses _check_field, workflow uses check_field
-	script_field_count=$(grep -c '_check_field ' "$VALIDATE_SCRIPT" || true)
-	workflow_field_count=$(grep -c 'check_field ' "$WORKFLOW" || true)
-	if [ "$script_field_count" -eq "$workflow_field_count" ]; then
-		pass "check_field count matches: script=$script_field_count workflow=$workflow_field_count"
-	else
-		fail "drift: check_field count mismatch" \
-			"script has $script_field_count, workflow has $workflow_field_count"
-	fi
-
-	# Server type list: both must list all four valid types
-	for stype in node python binary uv; do
-		if grep -q "$stype" "$VALIDATE_SCRIPT" &&
-			grep -q "$stype" "$WORKFLOW"; then
-			pass "both files list server type: $stype"
-		elif ! grep -q "$stype" "$VALIDATE_SCRIPT"; then
-			fail "drift: server type $stype" \
-				"missing from scripts/validate-manifest.sh"
-		else
-			fail "drift: server type $stype" \
-				"missing from workflow validate step"
-		fi
-	done
-
-	# Semver validation: both must have the [0-9] regex pattern
-	if grep -q '\[0-9\]' "$VALIDATE_SCRIPT" &&
-		grep -q '\[0-9\]' "$WORKFLOW"; then
-		pass "both files contain semver regex validation"
-	elif ! grep -q '\[0-9\]' "$VALIDATE_SCRIPT"; then
-		fail "drift: semver regex" \
-			"missing from scripts/validate-manifest.sh"
-	else
-		fail "drift: semver regex" \
-			"missing from workflow validate step"
-	fi
-
-	# UV manifest_version check: both must enforce uv -> 0.4
-	if grep -qE 'uv.*0\.4|0\.4.*uv' "$VALIDATE_SCRIPT" &&
-		grep -qE 'uv.*0\.4|0\.4.*uv' "$WORKFLOW"; then
-		pass "both files enforce UV requires manifest_version 0.4"
-	elif ! grep -qE 'uv.*0\.4|0\.4.*uv' "$VALIDATE_SCRIPT"; then
-		fail "drift: UV version check" \
-			"missing from scripts/validate-manifest.sh"
-	else
-		fail "drift: UV version check" \
-			"missing from workflow validate step"
-	fi
-
-	# Platform validation: both must validate darwin|win32|linux
-	if grep -q 'darwin.*win32\|win32.*linux' "$VALIDATE_SCRIPT" &&
-		grep -q 'darwin.*win32\|win32.*linux' "$WORKFLOW"; then
-		pass "both files validate platform values (darwin|win32|linux)"
-	elif ! grep -q 'darwin.*win32\|win32.*linux' "$VALIDATE_SCRIPT"; then
-		fail "drift: platform validation" \
-			"missing from scripts/validate-manifest.sh"
-	else
-		fail "drift: platform validation" \
-			"missing from workflow validate step"
-	fi
-
-	# user_config type validation: both must include directory|file types
-	if grep -q 'directory.*file\|file.*directory' "$VALIDATE_SCRIPT" &&
-		grep -q 'directory.*file\|file.*directory' "$WORKFLOW"; then
-		pass "both files validate user_config types (includes directory|file)"
-	elif ! grep -q 'directory.*file\|file.*directory' "$VALIDATE_SCRIPT"; then
-		fail "drift: user_config type validation" \
-			"missing from scripts/validate-manifest.sh"
-	else
-		fail "drift: user_config type validation" \
-			"missing from workflow validate step"
-	fi
-
-	# Variable ref validation: both must check ${user_config.*} substitution
-	if grep -q 'user_config\.' "$VALIDATE_SCRIPT" &&
-		grep -q 'user_config\.' "$WORKFLOW"; then
-		pass "both files validate user_config variable references"
-	elif ! grep -q 'user_config\.' "$VALIDATE_SCRIPT"; then
-		fail "drift: variable ref validation" \
-			"missing from scripts/validate-manifest.sh"
-	else
-		fail "drift: variable ref validation" \
-			"missing from workflow validate step"
-	fi
-
-	# Duplicate tool name check: both must use group_by to detect duplicates
-	if grep -q 'group_by' "$VALIDATE_SCRIPT" &&
-		grep -q 'group_by' "$WORKFLOW"; then
-		pass "both files check for duplicate tool names (group_by)"
-	elif ! grep -q 'group_by' "$VALIDATE_SCRIPT"; then
-		fail "drift: duplicate tool check" \
-			"missing from scripts/validate-manifest.sh"
-	else
-		fail "drift: duplicate tool check" \
-			"missing from workflow validate step"
-	fi
-
-	# Tool description check: both must emit the same error message
-	tool_msg='Tool missing name or description'
-	if grep -q "$tool_msg" "$VALIDATE_SCRIPT" &&
-		grep -q "$tool_msg" "$WORKFLOW"; then
-		pass "both files check for tool missing name or description"
-	elif ! grep -q "$tool_msg" "$VALIDATE_SCRIPT"; then
-		fail "drift: tool description check" \
-			"missing from scripts/validate-manifest.sh"
-	else
-		fail "drift: tool description check" \
-			"missing from workflow validate step"
-	fi
 
 else
-	fail "drift-detection" \
+	fail "drift-prevention" \
 		"cannot run: validate-manifest.sh or workflow not found"
 fi
 
@@ -866,8 +801,9 @@ else
 fi
 
 # .mcpbignore pattern handling does not allow absolute paths to escape staging
-if grep -q 'find.*STAGING.*-name' "$WORKFLOW"; then
-	pass "workflow .mcpbignore uses find -name (confined to staging dir)"
+if grep -q 'find.*STAGING.*-name' "$WORKFLOW" &&
+	grep -q 'find.*STAGING.*-path' "$WORKFLOW"; then
+	pass "workflow .mcpbignore uses find -name/-path (confined to staging dir)"
 else
 	fail "workflow security" \
 		".mcpbignore processing may not be confined to staging dir"
@@ -1049,6 +985,94 @@ if grep -q 'actions/checkout' "$WORKFLOW"; then
 else
 	fail "workflow capability" \
 		"missing checkout step"
+fi
+
+# --- .mcpbignore path-relative matching tests ---
+echo ""
+echo "-- .mcpbignore path-relative matching tests --"
+
+# workflow supports path-relative patterns (find -path for patterns with /)
+if grep -q '\-path.*pattern\|find.*-path' "$WORKFLOW"; then
+	pass "workflow .mcpbignore supports path-relative patterns (find -path)"
+else
+	fail "workflow .mcpbignore" \
+		"missing path-relative pattern support (find -path)"
+fi
+
+# workflow still supports simple basename patterns (find -name)
+if grep -q 'find.*-name.*pattern\|find.*-name.*pat\|find.*-name.*dirpat' \
+	"$WORKFLOW"; then
+	pass "workflow .mcpbignore supports basename patterns (find -name)"
+else
+	fail "workflow .mcpbignore" \
+		"missing basename pattern support (find -name)"
+fi
+
+# action.yml .mcpbignore handles path-relative patterns
+if grep -q 'Path-relative pattern' "$ACTION"; then
+	pass "action.yml .mcpbignore documents path-relative handling"
+else
+	fail "action.yml .mcpbignore" \
+		"missing path-relative pattern handling"
+fi
+
+# --- Zip fallback bundle validation tests ---
+echo ""
+echo "-- Zip fallback validation tests --"
+
+# workflow validates bundle contains manifest.json after packaging
+if grep -q 'unzip.*BUNDLE_FILE' "$WORKFLOW" &&
+	grep -q 'manifest\.json' "$WORKFLOW"; then
+	pass "workflow validates bundle structure after packaging"
+else
+	fail "workflow packaging" \
+		"missing bundle validation after packaging"
+fi
+
+# action.yml validates bundle contains manifest.json after zip fallback
+if grep -q 'USED_FALLBACK' "$ACTION" &&
+	grep -q 'manifest\.json' "$ACTION"; then
+	pass "action.yml validates bundle structure on zip fallback"
+else
+	fail "action.yml packaging" \
+		"missing bundle validation on zip fallback"
+fi
+
+# workflow emits ::error:: on missing manifest in bundle
+if grep -q '::error::Bundle missing manifest.json' "$WORKFLOW"; then
+	pass "workflow emits error annotation on invalid bundle"
+else
+	fail "workflow packaging" \
+		"missing error annotation for invalid bundle"
+fi
+
+# action.yml emits ::error:: on missing manifest in bundle
+if grep -q '::error::Bundle missing manifest.json' "$ACTION"; then
+	pass "action.yml emits error annotation on invalid bundle"
+else
+	fail "action.yml packaging" \
+		"missing error annotation for invalid bundle"
+fi
+
+# --- Validation script completeness ---
+echo ""
+echo "-- Validation script completeness --"
+
+# Verify the canonical script exports validate_manifest function
+if grep -q '^validate_manifest()' "$VALIDATE_SCRIPT"; then
+	pass "canonical script defines validate_manifest function"
+else
+	fail "canonical script" \
+		"missing validate_manifest function definition"
+fi
+
+# Verify the canonical script checks all 7 required fields
+script_field_count=$(grep -c '_check_field ' "$VALIDATE_SCRIPT" || true)
+if [ "$script_field_count" -eq 7 ]; then
+	pass "canonical script checks 7 required fields"
+else
+	fail "canonical script" \
+		"expected 7 _check_field calls, got $script_field_count"
 fi
 
 # --- Skill: security constraints documented ---

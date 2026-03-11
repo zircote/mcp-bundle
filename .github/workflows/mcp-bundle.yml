@@ -91,6 +91,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Checkout mcp-bundle action scripts
+        # Fetch scripts/validate-manifest.sh from the action repo so the reusable
+        # workflow sources the same canonical script as action.yml, eliminating
+        # the need to maintain an inline duplicate. mirrors scripts/validate-manifest.sh
+        uses: actions/checkout@v4
+        with:
+          repository: zircote/mcp-bundle
+          path: .mcp-bundle-action
+          sparse-checkout: scripts/validate-manifest.sh
+          sparse-checkout-cone-mode: false
+
       - name: Detect server type
         id: detect
         env:
@@ -137,9 +148,9 @@ jobs:
         id: validate
         env:
           MANIFEST: ${{ inputs.manifest-path }}
-        # NOTE: This validation logic mirrors scripts/validate-manifest.sh.
-        # The reusable workflow runs in the caller's repo context so it cannot
-        # source from $GITHUB_ACTION_PATH. Keep both in sync on changes.
+        # Sources scripts/validate-manifest.sh from the mcp-bundle action repo
+        # checked out above — the canonical source of truth, no inline duplicate.
+        # mirrors scripts/validate-manifest.sh
         run: |
           if [ ! -f "$MANIFEST" ]; then
             echo "::error::Manifest file not found: $MANIFEST"
@@ -147,84 +158,15 @@ jobs:
             exit 1
           fi
 
-          ERRORS=""
+          # shellcheck source=.mcp-bundle-action/scripts/validate-manifest.sh
+          source "$GITHUB_WORKSPACE/.mcp-bundle-action/scripts/validate-manifest.sh"
 
-          check_field() {
-            local value
-            value=$(jq -r "$1 // empty" "$MANIFEST")
-            if [ -z "$value" ]; then
-              ERRORS+="Missing required field: $1\n"
-            fi
-          }
-
-          check_field '.manifest_version'
-          check_field '.name'
-          check_field '.version'
-          check_field '.description'
-          check_field '.author.name'
-          check_field '.server.type'
-          check_field '.server.entry_point'
-
-          SERVER_TYPE=$(jq -r '.server.type' "$MANIFEST")
-          case "$SERVER_TYPE" in
-            node|python|binary|uv) ;;
-            *) ERRORS+="Invalid server type: ${SERVER_TYPE}\n" ;;
-          esac
-
-          VERSION=$(jq -r '.version' "$MANIFEST")
-          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?$'; then
-            ERRORS+="Invalid version (not semver): ${VERSION}\n"
-          fi
-
-          MANIFEST_VER=$(jq -r '.manifest_version' "$MANIFEST")
-          if [ "$SERVER_TYPE" = "uv" ] && [ "$MANIFEST_VER" != "0.4" ]; then
-            ERRORS+="UV server type requires manifest_version 0.4, got: ${MANIFEST_VER}\n"
-          fi
-
-          PLATFORMS=$(jq -r '.compatibility.platforms[]? // empty' "$MANIFEST" 2>/dev/null)
-          for p in $PLATFORMS; do
-            case "$p" in
-              darwin|win32|linux) ;;
-              *) ERRORS+="Invalid platform: ${p}\n" ;;
-            esac
-          done
-
-          ENTRY=$(jq -r '.server.entry_point' "$MANIFEST")
+          ENTRY=$(jq -r '.server.entry_point // empty' "$MANIFEST")
           if [ -n "$ENTRY" ] && [ ! -f "$ENTRY" ]; then
-            ERRORS+="Entry point file not found: ${ENTRY}\n"
+            echo "::error::Entry point file not found: ${ENTRY}"
           fi
 
-          CONFIG_TYPES=$(jq -r '.user_config // {} | to_entries[] | .value.type // empty' "$MANIFEST" 2>/dev/null || true)
-          for t in $CONFIG_TYPES; do
-            case "$t" in
-              string|number|boolean|directory|file) ;;
-              *) ERRORS+="Invalid user_config type: ${t}\n" ;;
-            esac
-          done
-
-          USED_VARS=$(jq -r '[.server.mcp_config.args[]?, (.server.mcp_config.env // {} | to_entries[] | .value)] | map(select(test("\\$\\{user_config\\."))) | map(capture("\\$\\{user_config\\.(?<key>[^}]+)\\}") | .key) | unique[]' "$MANIFEST" 2>/dev/null || true)
-          for var in $USED_VARS; do
-            HAS_CONFIG=$(jq -r ".user_config.\"$var\" // empty" "$MANIFEST")
-            if [ -z "$HAS_CONFIG" ]; then
-              ERRORS+="Variable \${user_config.${var}} referenced but not defined in user_config\n"
-            fi
-          done
-
-          TOOL_MISSING=$(jq -r '
-            .tools[]? |
-            select((.name // "") == "" or (.description // "") == "") |
-            .name // "(unnamed)"
-          ' "$MANIFEST" 2>/dev/null || true)
-          if [ -n "$TOOL_MISSING" ]; then
-            ERRORS+="Tool missing name or description: ${TOOL_MISSING}\n"
-          fi
-
-          DUPS=$(jq -r '[.tools[]?.name] | group_by(.) | map(select(length > 1)) | .[0][0] // empty' "$MANIFEST" 2>/dev/null)
-          if [ -n "$DUPS" ]; then
-            ERRORS+="Duplicate tool name: ${DUPS}\n"
-          fi
-
-          if [ -n "$ERRORS" ]; then
+          if ! ERRORS=$(validate_manifest "$MANIFEST"); then
             echo "::error::Manifest validation failed:"
             printf "%b" "$ERRORS" | while IFS= read -r line; do
               echo "::error::  $line"
@@ -339,14 +281,33 @@ jobs:
           STAGING: ${{ steps.collect.outputs.staging-dir }}
         run: |
           if [ ! -f ".mcpbignore" ]; then exit 0; fi
+          # Path-relative matching (gitignore semantics):
+          #   - patterns with '/' match against the bundle-relative path
+          #   - patterns without '/' match against the basename only
+          #   - patterns ending with '/' remove the entire directory tree
           while IFS= read -r pattern || [ -n "$pattern" ]; do
             pattern=$(echo "$pattern" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
             [ -z "$pattern" ] && continue
             [[ "$pattern" == \#* ]] && continue
             if [[ "$pattern" == */ ]]; then
-              find "$STAGING" -type d -name "${pattern%/}" -exec rm -rf {} + 2>/dev/null || true
+              dirpat="${pattern%/}"
+              if [[ "$dirpat" == */* ]]; then
+                # Path-relative dir (e.g. build/tmp/): match by relative path
+                find "$STAGING" -type d -path "*/${dirpat}" \
+                  -exec rm -rf {} + 2>/dev/null || true
+              else
+                # Basename-only dir (e.g. __pycache__/): match by name
+                find "$STAGING" -type d -name "${dirpat}" \
+                  -exec rm -rf {} + 2>/dev/null || true
+              fi
+            elif [[ "$pattern" == */* ]]; then
+              # Path-relative file (e.g. dist/debug.log): match by relative path
+              find "$STAGING" -path "*/${pattern}" \
+                -exec rm -rf {} + 2>/dev/null || true
             else
-              find "$STAGING" -name "$pattern" -exec rm -rf {} + 2>/dev/null || true
+              # Basename pattern (e.g. *.log): match by filename only
+              find "$STAGING" -name "$pattern" \
+                -exec rm -rf {} + 2>/dev/null || true
             fi
           done < ".mcpbignore"
           echo "Files after .mcpbignore filtering:"
@@ -381,6 +342,22 @@ jobs:
           fi
 
           cd "$GITHUB_WORKSPACE"
+
+          # Validate bundle structure (applies whether mcpb or zip produced it).
+          # Catches cases where zip fallback silently omits required files.
+          BUNDLE_CONTENTS=$(unzip -Z1 "$BUNDLE_FILE" 2>/dev/null || true)
+          if ! echo "$BUNDLE_CONTENTS" | grep -q '^manifest\.json$'; then
+            echo "::error::Bundle missing manifest.json — archive may be malformed"
+            exit 1
+          fi
+          ENTRY_POINT=$(jq -r '.server.entry_point // empty' "$MANIFEST")
+          if [ -n "$ENTRY_POINT" ]; then
+            ENTRY_REL="${ENTRY_POINT#./}"
+            if ! echo "$BUNDLE_CONTENTS" | grep -qF "$ENTRY_REL"; then
+              echo "::warning::Bundle does not contain declared entry_point: ${ENTRY_REL}"
+            fi
+          fi
+
           echo "bundle-path=$BUNDLE_FILE" >> "$GITHUB_OUTPUT"
           echo "Bundle created: $BUNDLE_FILE ($(du -h "$BUNDLE_FILE" | cut -f1))"
 
