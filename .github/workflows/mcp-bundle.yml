@@ -30,7 +30,7 @@ on:  # yamllint disable-line rule:truthy
         description: Node.js version for build environment
         required: false
         type: string
-        default: '18'
+        default: '20'
       build-command:
         description: >-
           Shell command to run before packaging (executed via bash -c on the

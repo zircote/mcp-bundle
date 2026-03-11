@@ -10,7 +10,7 @@ A Claude Code plugin and GitHub Actions workflow for generating [MCPB (MCP Bundl
 ## Prerequisites
 
 - An MCP server project using stdio transport
-- [Node.js](https://nodejs.org/) 18+ (for Node.js server types and the `mcpb` CLI)
+- [Node.js](https://nodejs.org/) 20+ (for Node.js server types and the `mcpb` CLI)
 - `jq` installed (used by validation scripts)
 - For local testing: `npm install -g @anthropic-ai/mcpb`
 
@@ -104,7 +104,7 @@ Run `/mcpb` in a project directory containing an MCP server. The skill will:
 | `manifest-path` | string | no | `manifest.json` | Path to manifest.json |
 | `config-files` | string | no | `""` | Glob pattern(s) for config files to include |
 | `additional-artifacts` | string | no | `""` | Glob pattern(s) for extra files to bundle |
-| `node-version` | string | no | `"18"` | Node.js version for build environment |
+| `node-version` | string | no | `"20"` | Node.js version for build environment |
 | `build-command` | string | no | `npm run build` | Shell command via `bash -c` before packaging. **Arbitrary code execution** — never set from untrusted input |
 | `test-command` | string | no | `npm test` | Shell command via `bash -c` before packaging (empty to skip). **Arbitrary code execution** |
 | `bundle-name` | string | no | `""` | Override bundle output filename |

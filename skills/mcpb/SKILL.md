@@ -183,7 +183,7 @@ Create a valid `manifest.json` at the project root. Use the correct schema based
 - `args` should use `${__dirname}` variable for the entry point path
 - Sensitive config values use `${user_config.KEY_NAME}` variable substitution in `env`
 - `tools` array: list every tool the server exposes; each entry must have both `name` and `description`
-- `compatibility.runtimes`: e.g., `{"node": ">=18.0.0"}` or `{"python": ">=3.10"}`
+- `compatibility.runtimes`: e.g., `{"node": ">=20.0.0"}` or `{"python": ">=3.10"}`
 
 ### Step 4: Create Bundle Directory Structure
 
@@ -301,7 +301,7 @@ jobs:
     with:
       source-files: "<detected-source-glob>"
       manifest-path: "manifest.json"
-      node-version: "<detected-node-version-or-18>"
+      node-version: "<detected-node-version-or-20>"
       build-command: "<detected-build-command-or-npm-run-build>"
       test-command: "<detected-test-command-or-npm-test>"
       upload-artifact: true
@@ -314,7 +314,7 @@ jobs:
 - `additional-artifacts`: Include if assets directory exists
 - `build-command`: From `package.json` scripts.build, or `pyproject.toml` build config
 - `test-command`: From `package.json` scripts.test, or `pytest`/`python -m pytest`
-- `node-version`: From `.nvmrc`, `package.json` engines, or default `"18"`
+- `node-version`: From `.nvmrc`, `package.json` engines, or default `"20"`
 
 ### Step 7: Summary Output
 
