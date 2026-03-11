@@ -14,8 +14,6 @@
 # validate_manifest <path>
 #   Prints validation error lines to stdout.
 #   Returns 0 on success, 1 on failure.
-set -euo pipefail
-
 validate_manifest() {
 	local manifest="$1"
 	local errors=""

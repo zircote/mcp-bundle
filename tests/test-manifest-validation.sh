@@ -21,135 +21,9 @@ fail() {
 }
 
 # ── Manifest validation function ──
-# Mirrors the validation logic from the workflow
-validate_manifest() {
-	local manifest="$1"
-	local errors=""
-
-	if [ ! -f "$manifest" ]; then
-		echo "FILE_NOT_FOUND"
-		return 1
-	fi
-
-	# Check required fields
-	for field in \
-		'.manifest_version' '.name' '.version' \
-		'.description' '.author.name' \
-		'.server.type' '.server.entry_point'; do
-		value=$(jq -r "$field // empty" "$manifest")
-		if [ -z "$value" ]; then
-			errors+="Missing: ${field}\n"
-		fi
-	done
-
-	# Validate server type
-	server_type=$(jq -r '.server.type // empty' \
-		"$manifest")
-	if [ -n "$server_type" ]; then
-		case "$server_type" in
-		node | python | binary | uv) ;;
-		*) errors+="Invalid type: ${server_type}\n" ;;
-		esac
-	fi
-
-	# Validate semver
-	version=$(jq -r '.version // empty' "$manifest")
-	if [ -n "$version" ]; then
-		semver='^[0-9]+\.[0-9]+\.[0-9]+'
-		semver+='(-[a-zA-Z0-9.]+)?'
-		semver+='(\+[a-zA-Z0-9.]+)?$'
-		if ! echo "$version" | grep -qE "$semver"; then
-			errors+="Invalid semver: ${version}\n"
-		fi
-	fi
-
-	# UV must use manifest_version 0.4
-	if [ "$server_type" = "uv" ]; then
-		mv=$(jq -r '.manifest_version' "$manifest")
-		if [ "$mv" != "0.4" ]; then
-			errors+="UV requires version 0.4\n"
-		fi
-	fi
-
-	# Validate platforms
-	platforms=$(jq -r \
-		'.compatibility.platforms[]? // empty' \
-		"$manifest" 2>/dev/null)
-	for p in $platforms; do
-		case "$p" in
-		darwin | win32 | linux) ;;
-		*) errors+="Invalid platform: ${p}\n" ;;
-		esac
-	done
-
-	# Validate user_config types
-	config_types=$(jq -r '
-    .user_config // {} |
-    to_entries[] |
-    .value.type // empty
-  ' "$manifest" 2>/dev/null || true)
-	for t in $config_types; do
-		case "$t" in
-		string | number | boolean | directory | file) ;;
-		*) errors+="Invalid config type: ${t}\n" ;;
-		esac
-	done
-
-	# Validate variable substitution refs
-	used_vars=$(jq -r '
-    [
-      .server.mcp_config.args[]?,
-      (
-        .server.mcp_config.env // {}
-        | to_entries[]
-        | .value
-      )
-    ] |
-    map(select(test("\\$\\{user_config\\."))) |
-    map(
-      capture(
-        "\\$\\{user_config\\.(?<k>[^}]+)\\}"
-      ) | .k
-    ) | unique[]
-  ' "$manifest" 2>/dev/null || true)
-
-	for var in $used_vars; do
-		has=$(jq -r \
-			".user_config.\"$var\" // empty" \
-			"$manifest")
-		if [ -z "$has" ]; then
-			errors+="Undefined ref: ${var}\n"
-		fi
-	done
-
-	# Check tool entries have both name and description
-	tool_missing=$(jq -r '
-    .tools[]? |
-    select((.name // "") == "" or (.description // "") == "") |
-    .name // "(unnamed)"
-  ' "$manifest" 2>/dev/null || true)
-	if [ -n "$tool_missing" ]; then
-		errors+="Tool missing name or description: ${tool_missing}\n"
-	fi
-
-	# Check duplicate tool names
-	dups=$(jq -r '
-    [.tools[]?.name] |
-    group_by(.) |
-    map(select(length > 1)) |
-    .[0][0] // empty
-  ' "$manifest" 2>/dev/null)
-	if [ -n "$dups" ]; then
-		errors+="Duplicate tool: ${dups}\n"
-	fi
-
-	if [ -n "$errors" ]; then
-		printf "%b" "$errors"
-		return 1
-	fi
-
-	return 0
-}
+# Source the canonical validation script (scripts/validate-manifest.sh)
+# shellcheck source=../scripts/validate-manifest.sh
+source "$SCRIPT_DIR/../scripts/validate-manifest.sh"
 
 # ── Test cases ──
 
@@ -201,7 +75,7 @@ else
 	output=$(validate_manifest \
 		"$FIXTURES/invalid-missing-fields.json" \
 		2>&1 || true)
-	if echo "$output" | grep -q "Missing:"; then
+	if echo "$output" | grep -q "Missing required field:"; then
 		pass "missing fields detected correctly"
 	else
 		fail "invalid-missing-fields.json" \
@@ -219,7 +93,7 @@ else
 	output=$(validate_manifest \
 		"$FIXTURES/invalid-bad-version.json" \
 		2>&1 || true)
-	if echo "$output" | grep -q "Invalid semver"; then
+	if echo "$output" | grep -q "Invalid version"; then
 		pass "invalid semver detected correctly"
 	else
 		fail "invalid-bad-version.json" \
@@ -237,7 +111,7 @@ else
 	output=$(validate_manifest \
 		"$FIXTURES/invalid-bad-type.json" \
 		2>&1 || true)
-	if echo "$output" | grep -q "Invalid type"; then
+	if echo "$output" | grep -q "Invalid server type"; then
 		pass "invalid server type detected correctly"
 	else
 		fail "invalid-bad-type.json" \
@@ -256,7 +130,7 @@ else
 		"$FIXTURES/invalid-uv-wrong-version.json" \
 		2>&1 || true)
 	if echo "$output" |
-		grep -q "UV requires version 0.4"; then
+		grep -q "UV server type requires manifest_version 0.4"; then
 		pass "UV version mismatch detected correctly"
 	else
 		fail "invalid-uv-wrong-version.json" \
@@ -311,7 +185,7 @@ else
 	output=$(validate_manifest \
 		"$FIXTURES/invalid-undefined-config-ref.json" \
 		2>&1 || true)
-	if echo "$output" | grep -q "Undefined ref"; then
+	if echo "$output" | grep -q "user_config"; then
 		pass "undefined config ref detected correctly"
 	else
 		fail "invalid-undefined-config-ref.json" \
@@ -330,7 +204,7 @@ else
 		"$FIXTURES/invalid-bad-config-type.json" \
 		2>&1 || true)
 	if echo "$output" |
-		grep -q "Invalid config type"; then
+		grep -q "Invalid user_config type"; then
 		pass "invalid config type detected correctly"
 	else
 		fail "invalid-bad-config-type.json" \
@@ -458,6 +332,151 @@ if [ -f "$VALIDATE_SCRIPT" ]; then
 	fi
 else
 	fail "scripts/validate-manifest.sh" "file not found"
+fi
+
+# --- Validation sync drift-detection tests ---
+# Verify that the workflow's inline validate step and scripts/validate-manifest.sh
+# stay in sync by checking that identical validation rules exist in both files.
+echo ""
+echo "-- Validation sync drift-detection tests --"
+
+VALIDATE_SCRIPT="$SCRIPT_DIR/../scripts/validate-manifest.sh"
+
+if [ -f "$VALIDATE_SCRIPT" ] && [ -f "$WORKFLOW" ]; then
+
+	# Required fields: same set checked in both files
+	# Script uses single-quotes: _check_field '.manifest_version'
+	# Workflow uses single-quotes: check_field '.manifest_version'
+	for field in \
+		'.manifest_version' '.name' '.version' \
+		'.description' '.author.name' \
+		'.server.type' '.server.entry_point'; do
+		in_script=$(grep -c "$field" "$VALIDATE_SCRIPT" || true)
+		in_workflow=$(grep -c "$field" "$WORKFLOW" || true)
+		if [ "$in_script" -ge 1 ] && [ "$in_workflow" -ge 1 ]; then
+			pass "both files check required field: $field"
+		elif [ "$in_script" -lt 1 ]; then
+			fail "drift: required field $field" \
+				"missing from scripts/validate-manifest.sh"
+		else
+			fail "drift: required field $field" \
+				"missing from workflow validate step"
+		fi
+	done
+
+	# check_field call count parity:
+	# script uses _check_field, workflow uses check_field
+	script_field_count=$(grep -c '_check_field ' "$VALIDATE_SCRIPT" || true)
+	workflow_field_count=$(grep -c 'check_field ' "$WORKFLOW" || true)
+	if [ "$script_field_count" -eq "$workflow_field_count" ]; then
+		pass "check_field count matches: script=$script_field_count workflow=$workflow_field_count"
+	else
+		fail "drift: check_field count mismatch" \
+			"script has $script_field_count, workflow has $workflow_field_count"
+	fi
+
+	# Server type list: both must list all four valid types
+	for stype in node python binary uv; do
+		if grep -q "$stype" "$VALIDATE_SCRIPT" &&
+			grep -q "$stype" "$WORKFLOW"; then
+			pass "both files list server type: $stype"
+		elif ! grep -q "$stype" "$VALIDATE_SCRIPT"; then
+			fail "drift: server type $stype" \
+				"missing from scripts/validate-manifest.sh"
+		else
+			fail "drift: server type $stype" \
+				"missing from workflow validate step"
+		fi
+	done
+
+	# Semver validation: both must have the [0-9] regex pattern
+	if grep -q '\[0-9\]' "$VALIDATE_SCRIPT" &&
+		grep -q '\[0-9\]' "$WORKFLOW"; then
+		pass "both files contain semver regex validation"
+	elif ! grep -q '\[0-9\]' "$VALIDATE_SCRIPT"; then
+		fail "drift: semver regex" \
+			"missing from scripts/validate-manifest.sh"
+	else
+		fail "drift: semver regex" \
+			"missing from workflow validate step"
+	fi
+
+	# UV manifest_version check: both must enforce uv -> 0.4
+	if grep -qE 'uv.*0\.4|0\.4.*uv' "$VALIDATE_SCRIPT" &&
+		grep -qE 'uv.*0\.4|0\.4.*uv' "$WORKFLOW"; then
+		pass "both files enforce UV requires manifest_version 0.4"
+	elif ! grep -qE 'uv.*0\.4|0\.4.*uv' "$VALIDATE_SCRIPT"; then
+		fail "drift: UV version check" \
+			"missing from scripts/validate-manifest.sh"
+	else
+		fail "drift: UV version check" \
+			"missing from workflow validate step"
+	fi
+
+	# Platform validation: both must validate darwin|win32|linux
+	if grep -q 'darwin.*win32\|win32.*linux' "$VALIDATE_SCRIPT" &&
+		grep -q 'darwin.*win32\|win32.*linux' "$WORKFLOW"; then
+		pass "both files validate platform values (darwin|win32|linux)"
+	elif ! grep -q 'darwin.*win32\|win32.*linux' "$VALIDATE_SCRIPT"; then
+		fail "drift: platform validation" \
+			"missing from scripts/validate-manifest.sh"
+	else
+		fail "drift: platform validation" \
+			"missing from workflow validate step"
+	fi
+
+	# user_config type validation: both must include directory|file types
+	if grep -q 'directory.*file\|file.*directory' "$VALIDATE_SCRIPT" &&
+		grep -q 'directory.*file\|file.*directory' "$WORKFLOW"; then
+		pass "both files validate user_config types (includes directory|file)"
+	elif ! grep -q 'directory.*file\|file.*directory' "$VALIDATE_SCRIPT"; then
+		fail "drift: user_config type validation" \
+			"missing from scripts/validate-manifest.sh"
+	else
+		fail "drift: user_config type validation" \
+			"missing from workflow validate step"
+	fi
+
+	# Variable ref validation: both must check ${user_config.*} substitution
+	if grep -q 'user_config\.' "$VALIDATE_SCRIPT" &&
+		grep -q 'user_config\.' "$WORKFLOW"; then
+		pass "both files validate user_config variable references"
+	elif ! grep -q 'user_config\.' "$VALIDATE_SCRIPT"; then
+		fail "drift: variable ref validation" \
+			"missing from scripts/validate-manifest.sh"
+	else
+		fail "drift: variable ref validation" \
+			"missing from workflow validate step"
+	fi
+
+	# Duplicate tool name check: both must use group_by to detect duplicates
+	if grep -q 'group_by' "$VALIDATE_SCRIPT" &&
+		grep -q 'group_by' "$WORKFLOW"; then
+		pass "both files check for duplicate tool names (group_by)"
+	elif ! grep -q 'group_by' "$VALIDATE_SCRIPT"; then
+		fail "drift: duplicate tool check" \
+			"missing from scripts/validate-manifest.sh"
+	else
+		fail "drift: duplicate tool check" \
+			"missing from workflow validate step"
+	fi
+
+	# Tool description check: both must emit the same error message
+	tool_msg='Tool missing name or description'
+	if grep -q "$tool_msg" "$VALIDATE_SCRIPT" &&
+		grep -q "$tool_msg" "$WORKFLOW"; then
+		pass "both files check for tool missing name or description"
+	elif ! grep -q "$tool_msg" "$VALIDATE_SCRIPT"; then
+		fail "drift: tool description check" \
+			"missing from scripts/validate-manifest.sh"
+	else
+		fail "drift: tool description check" \
+			"missing from workflow validate step"
+	fi
+
+else
+	fail "drift-detection" \
+		"cannot run: validate-manifest.sh or workflow not found"
 fi
 
 # --- Plugin structure tests ---
@@ -720,7 +739,7 @@ else
 	output=$(validate_manifest \
 		"$FIXTURES/invalid-version-with-v-prefix.json" \
 		2>&1 || true)
-	if echo "$output" | grep -q "Invalid semver"; then
+	if echo "$output" | grep -q "Invalid version"; then
 		pass "v-prefixed version rejected correctly"
 	else
 		fail "invalid-version-with-v-prefix.json" \
@@ -738,7 +757,7 @@ else
 	output=$(validate_manifest \
 		"$FIXTURES/invalid-empty-name.json" \
 		2>&1 || true)
-	if echo "$output" | grep -q "Missing:"; then
+	if echo "$output" | grep -q "Missing required field:"; then
 		pass "empty name string rejected correctly"
 	else
 		fail "invalid-empty-name.json" \
@@ -757,12 +776,12 @@ else
 		"$FIXTURES/invalid-multiple-missing-fields.json" \
 		2>&1 || true)
 	missing_count=$(echo "$output" |
-		grep -c "Missing:" || true)
+		grep -c "Missing required field:" || true)
 	if [ "$missing_count" -ge 3 ]; then
 		pass "multiple missing fields reported ($missing_count errors)"
 	else
 		fail "invalid-multiple-missing-fields.json" \
-			"expected >=3 Missing: errors, got $missing_count"
+			"expected >=3 Missing required field: errors, got $missing_count"
 	fi
 fi
 
@@ -777,12 +796,12 @@ else
 		"$FIXTURES/invalid-multiple-config-refs.json" \
 		2>&1 || true)
 	ref_count=$(echo "$output" |
-		grep -c "Undefined ref:" || true)
+		grep -c "user_config" || true)
 	if [ "$ref_count" -ge 2 ]; then
 		pass "multiple undefined config refs reported ($ref_count errors)"
 	else
 		fail "invalid-multiple-config-refs.json" \
-			"expected >=2 Undefined ref: errors, got $ref_count"
+			"expected >=2 user_config errors, got $ref_count"
 	fi
 fi
 

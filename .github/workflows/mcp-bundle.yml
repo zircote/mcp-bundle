@@ -263,17 +263,13 @@ jobs:
           cp "$MANIFEST" "$STAGING/manifest.json"
 
           copy_glob() {
-            local pattern dest
-            pattern=$(echo "$1" | xargs)
-            dest="$2"
-            local files matched=0
-            files=$(compgen -G "$pattern" 2>/dev/null || true)
-            for f in $files; do
-              if [ -f "$f" ]; then
-                mkdir -p "$dest/$(dirname "$f")"
-                cp "$f" "$dest/$f"
-                matched=$((matched + 1))
-              fi
+            local pattern="$1" dest="$2" matched=0
+            for f in $pattern; do
+              [ -f "$f" ] || continue
+              local rel="${f#./}"
+              mkdir -p "$dest/$(dirname "$rel")"
+              cp "$f" "$dest/$rel"
+              matched=$((matched + 1))
             done
             if [ "$matched" -eq 0 ]; then
               echo "::warning::No files matched pattern: ${pattern}"
@@ -290,6 +286,8 @@ jobs:
           if [ -n "$CONFIG_FILES" ]; then
             IFS=',' read -ra CFGS <<< "$CONFIG_FILES"
             for pat in "${CFGS[@]}"; do
+              pat=$(echo "$pat" | xargs)
+              [ -z "$pat" ] && continue
               copy_glob "$pat" "$STAGING"
             done
           fi
@@ -297,6 +295,8 @@ jobs:
           if [ -n "$EXTRA_FILES" ]; then
             IFS=',' read -ra EXTRAS <<< "$EXTRA_FILES"
             for pat in "${EXTRAS[@]}"; do
+              pat=$(echo "$pat" | xargs)
+              [ -z "$pat" ] && continue
               copy_glob "$pat" "$STAGING"
             done
           fi
@@ -389,7 +389,11 @@ jobs:
         env:
           BUNDLE_FILE: ${{ steps.pack.outputs.bundle-path }}
         run: |
-          SHA256=$(sha256sum "$BUNDLE_FILE" | awk '{print $1}')
+          if command -v sha256sum &>/dev/null; then
+            SHA256=$(sha256sum "$BUNDLE_FILE" | awk '{print $1}')
+          else
+            SHA256=$(shasum -a 256 "$BUNDLE_FILE" | awk '{print $1}')
+          fi
           echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
           echo "$SHA256  $BUNDLE_FILE" > "${BUNDLE_FILE}.sha256"
           echo "SHA-256: $SHA256"

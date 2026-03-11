@@ -124,7 +124,7 @@ Run `/mcpb` in a project directory containing an MCP server. The skill will:
 
 ### Manifest Validation Checks
 
-Both the reusable workflow and composite action perform these 10 validation checks:
+Both the reusable workflow and composite action perform these 11 validation checks:
 
 1. All required fields present (`manifest_version`, `name`, `version`, `description`, `author.name`, `server.type`, `server.entry_point`)
 2. `server.type` is one of: `node`, `python`, `binary`, `uv`
@@ -135,7 +135,8 @@ Both the reusable workflow and composite action perform these 10 validation chec
 7. `user_config` field types are valid (`string`, `number`, `boolean`, `directory`, `file`)
 8. All `${user_config.*}` variable references have matching `user_config` entries
 9. No duplicate tool names in `tools` array
-10. JSON is well-formed and parseable
+10. Each tool entry has both `name` and `description`
+11. JSON is well-formed and parseable
 
 ### Example Caller Workflows
 
@@ -171,7 +172,7 @@ Run the test suite:
 ./tests/test-manifest-validation.sh
 ```
 
-The test suite (76 tests) covers:
+The test suite covers:
 - Manifest validation: required fields, semver, server types, UV version constraint, platforms, config types, variable substitution refs, duplicate tools
 - JSON structure validation for all fixtures
 - Workflow and action YAML structure verification
