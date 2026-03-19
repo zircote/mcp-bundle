@@ -1,0 +1,476 @@
+[
+  {
+    "id": "happy-path-node",
+    "prompt": "I have a Node.js MCP server in this project. The package.json has @modelcontextprotocol/sdk as a dependency, the entry point is src/index.ts (compiled to dist/index.js), the server exposes two tools: search_files and read_file. There's a process.env.GITHUB_TOKEN used for authentication. Please create the MCPB bundle for this project.",
+    "expected_output": "Generates manifest.json with correct Node.js configuration, .mcpbignore, and CI/CD workflow",
+    "files": {
+      "package.json": "{\n  \"name\": \"file-browser-mcp\",\n  \"version\": \"1.2.0\",\n  \"description\": \"MCP server for browsing files\",\n  \"author\": \"Jane Dev <jane@example.com>\",\n  \"license\": \"MIT\",\n  \"main\": \"dist/index.js\",\n  \"scripts\": {\n    \"build\": \"tsc\",\n    \"test\": \"jest\"\n  },\n  \"dependencies\": {\n    \"@modelcontextprotocol/sdk\": \"^1.0.0\"\n  },\n  \"engines\": {\n    \"node\": \">=20.0.0\"\n  }\n}",
+      "src/index.ts": "import { Server } from '@modelcontextprotocol/sdk/server';\nimport { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio';\n\nconst token = process.env.GITHUB_TOKEN;\n\nconst server = new Server({ name: 'file-browser-mcp', version: '1.2.0' });\n\nserver.setRequestHandler('tools/list', async () => ({\n  tools: [\n    { name: 'search_files', description: 'Search for files by name pattern', inputSchema: { type: 'object', properties: { pattern: { type: 'string' } } } },\n    { name: 'read_file', description: 'Read the contents of a file', inputSchema: { type: 'object', properties: { path: { type: 'string' } } } }\n  ]\n}));\n\nconst transport = new StdioServerTransport();\nawait server.connect(transport);"
+    },
+    "deterministic_checks": [
+      {
+        "type": "json_valid",
+        "file": "manifest.json"
+      },
+      {
+        "type": "json_field_equals",
+        "file": "manifest.json",
+        "field": ".manifest_version",
+        "expected": "0.3"
+      },
+      {
+        "type": "json_field_equals",
+        "file": "manifest.json",
+        "field": ".server.type",
+        "expected": "node"
+      },
+      {
+        "type": "json_field_equals",
+        "file": "manifest.json",
+        "field": ".name",
+        "expected": "file-browser-mcp"
+      },
+      {
+        "type": "json_field_equals",
+        "file": "manifest.json",
+        "field": ".version",
+        "expected": "1.2.0"
+      },
+      {
+        "type": "json_field_count",
+        "file": "manifest.json",
+        "field": ".tools",
+        "op": "eq",
+        "expected": 2
+      },
+      {
+        "type": "json_array_contains",
+        "file": "manifest.json",
+        "field": ".tools",
+        "match": { "name": "search_files" }
+      },
+      {
+        "type": "json_array_contains",
+        "file": "manifest.json",
+        "field": ".tools",
+        "match": { "name": "read_file" }
+      },
+      {
+        "type": "json_field_equals",
+        "file": "manifest.json",
+        "field": ".server.mcp_config.command",
+        "expected": "node"
+      },
+      {
+        "type": "regex_match",
+        "file": "manifest.json",
+        "pattern": "\\$\\{__dirname\\}"
+      },
+      {
+        "type": "file_exists",
+        "file": ".github/workflows/mcpb-package.yml"
+      },
+      {
+        "type": "file_exists",
+        "file": ".mcpbignore"
+      }
+    ],
+    "expectations": [
+      {
+        "description": "user_config includes GITHUB_TOKEN marked as sensitive",
+        "check": "output_file_content",
+        "file": "manifest.json",
+        "criteria": "user_config must contain a 'GITHUB_TOKEN' or 'github_token' entry with '\"sensitive\": true'"
+      },
+      {
+        "description": "CI/CD workflow references the correct reusable workflow",
+        "check": "output_file_content",
+        "file": ".github/workflows/mcpb-package.yml",
+        "criteria": "File must reference 'zircote/mcp-bundle/.github/workflows/mcp-bundle.yml@v1'"
+      }
+    ]
+  },
+  {
+    "id": "happy-path-python",
+    "prompt": "Bundle this Python MCP server project as an MCPB package. It uses the mcp Python SDK with stdio transport.",
+    "expected_output": "Generates manifest.json with Python configuration, manifest_version 0.3, server type python",
+    "files": {
+      "requirements.txt": "mcp>=0.9.0\nrequests>=2.28.0",
+      "pyproject.toml": "[project]\nname = \"weather-mcp\"\nversion = \"0.5.0\"\ndescription = \"MCP server providing weather data\"\nauthors = [{name = \"Bob Smith\", email = \"bob@example.com\"}]\nlicense = {text = \"Apache-2.0\"}\nrequires-python = \">=3.10\"",
+      "server/main.py": "from mcp.server import Server\nfrom mcp.server.stdio import stdio_server\nimport os\n\napi_key = os.environ.get('WEATHER_API_KEY')\ndefault_units = os.environ.get('UNITS', 'metric')\n\napp = Server('weather-mcp')\n\n@app.list_tools()\nasync def list_tools():\n    return [\n        {'name': 'get_forecast', 'description': 'Get weather forecast for a location'},\n        {'name': 'get_current', 'description': 'Get current weather conditions'},\n        {'name': 'get_alerts', 'description': 'Get active weather alerts for a region'}\n    ]\n\nasync def main():\n    async with stdio_server() as streams:\n        await app.run(streams[0], streams[1])\n"
+    },
+    "deterministic_checks": [
+      {
+        "type": "json_valid",
+        "file": "manifest.json"
+      },
+      {
+        "type": "json_field_equals",
+        "file": "manifest.json",
+        "field": ".manifest_version",
+        "expected": "0.3"
+      },
+      {
+        "type": "json_field_equals",
+        "file": "manifest.json",
+        "field": ".server.type",
+        "expected": "python"
+      },
+      {
+        "type": "json_field_equals",
+        "file": "manifest.json",
+        "field": ".name",
+        "expected": "weather-mcp"
+      },
+      {
+        "type": "json_field_equals",
+        "file": "manifest.json",
+        "field": ".version",
+        "expected": "0.5.0"
+      },
+      {
+        "type": "json_field_count",
+        "file": "manifest.json",
+        "field": ".tools",
+        "op": "eq",
+        "expected": 3
+      },
+      {
+        "type": "json_array_contains",
+        "file": "manifest.json",
+        "field": ".tools",
+        "match": { "name": "get_forecast" }
+      },
+      {
+        "type": "json_array_contains",
+        "file": "manifest.json",
+        "field": ".tools",
+        "match": { "name": "get_current" }
+      },
+      {
+        "type": "json_array_contains",
+        "file": "manifest.json",
+        "field": ".tools",
+        "match": { "name": "get_alerts" }
+      },
+      {
+        "type": "json_field_equals",
+        "file": "manifest.json",
+        "field": ".license",
+        "expected": "Apache-2.0"
+      }
+    ],
+    "expectations": [
+      {
+        "description": "WEATHER_API_KEY detected in user_config as sensitive (matches *_KEY pattern)",
+        "check": "output_file_content",
+        "file": "manifest.json",
+        "criteria": "user_config must include a WEATHER_API_KEY entry with '\"sensitive\": true'"
+      }
+    ]
+  },
+  {
+    "id": "happy-path-uv",
+    "prompt": "Create an MCPB bundle for this project. It's a Python MCP server that uses UV for dependency management - there's no venv or lib directory, just a pyproject.toml with inline deps.",
+    "expected_output": "Generates manifest.json with UV configuration, manifest_version 0.4, no mcp_config section",
+    "files": {
+      "pyproject.toml": "[project]\nname = \"code-analyzer\"\nversion = \"2.0.0\"\ndescription = \"MCP server for static code analysis\"\nauthors = [{name = \"Alice Coder\"}]\nlicense = {text = \"MIT\"}\nrequires-python = \">=3.11\"\ndependencies = [\n    \"mcp>=1.0.0\",\n    \"tree-sitter>=0.20.0\"\n]",
+      "src/server.py": "from mcp.server import Server\nfrom mcp.server.stdio import stdio_server\n\napp = Server('code-analyzer')\n\n@app.list_tools()\nasync def list_tools():\n    return [\n        {'name': 'analyze_file', 'description': 'Run static analysis on a source file'},\n        {'name': 'list_symbols', 'description': 'List all symbols defined in a file'}\n    ]\n\nasync def main():\n    async with stdio_server() as streams:\n        await app.run(streams[0], streams[1])\n"
+    },
+    "deterministic_checks": [
+      {
+        "type": "json_valid",
+        "file": "manifest.json"
+      },
+      {
+        "type": "json_field_equals",
+        "file": "manifest.json",
+        "field": ".manifest_version",
+        "expected": "0.4"
+      },
+      {
+        "type": "json_field_equals",
+        "file": "manifest.json",
+        "field": ".server.type",
+        "expected": "uv"
+      },
+      {
+        "type": "json_field_absent",
+        "file": "manifest.json",
+        "field": ".server.mcp_config"
+      },
+      {
+        "type": "json_field_equals",
+        "file": "manifest.json",
+        "field": ".server.entry_point",
+        "expected": "src/server.py"
+      }
+    ],
+    "expectations": [
+      {
+        "description": "Compatibility runtimes specifies python >=3.11",
+        "check": "output_file_content",
+        "file": "manifest.json",
+        "criteria": "compatibility.runtimes must include python with a version constraint containing '3.11'"
+      }
+    ]
+  },
+  {
+    "id": "user-config-detection",
+    "prompt": "Generate an MCPB bundle for this Node.js MCP server. Pay special attention to all the environment variables it uses.",
+    "expected_output": "Generates manifest with user_config entries for all detected env vars, with correct sensitive flags",
+    "files": {
+      "package.json": "{\n  \"name\": \"multi-api-mcp\",\n  \"version\": \"1.0.0\",\n  \"description\": \"MCP server connecting to multiple APIs\",\n  \"author\": \"Dev Team\",\n  \"license\": \"MIT\",\n  \"main\": \"index.js\",\n  \"dependencies\": {\n    \"@modelcontextprotocol/sdk\": \"^1.0.0\"\n  }\n}",
+      "index.js": "import { Server } from '@modelcontextprotocol/sdk/server';\nimport { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio';\n\nconst OPENAI_API_KEY = process.env.OPENAI_API_KEY;\nconst DATABASE_PASSWORD = process.env.DATABASE_PASSWORD;\nconst SLACK_TOKEN = process.env.SLACK_TOKEN;\nconst LOG_LEVEL = process.env.LOG_LEVEL || 'info';\nconst MAX_RETRIES = parseInt(process.env.MAX_RETRIES || '3');\nconst ENABLE_CACHE = process.env.ENABLE_CACHE === 'true';\n\nconst server = new Server({ name: 'multi-api-mcp', version: '1.0.0' });\nserver.setRequestHandler('tools/list', async () => ({ tools: [{ name: 'query', description: 'Query connected APIs' }] }));\nconst transport = new StdioServerTransport();\nawait server.connect(transport);"
+    },
+    "deterministic_checks": [
+      {
+        "type": "json_valid",
+        "file": "manifest.json"
+      },
+      {
+        "type": "json_field_exists",
+        "file": "manifest.json",
+        "field": ".user_config"
+      }
+    ],
+    "expectations": [
+      {
+        "description": "OPENAI_API_KEY detected as sensitive (matches *_KEY pattern)",
+        "check": "output_file_content",
+        "file": "manifest.json",
+        "criteria": "user_config must have an entry for OPENAI_API_KEY (or openai_api_key) with '\"sensitive\": true'"
+      },
+      {
+        "description": "DATABASE_PASSWORD detected as sensitive (matches *_PASSWORD pattern)",
+        "check": "output_file_content",
+        "file": "manifest.json",
+        "criteria": "user_config must have an entry for DATABASE_PASSWORD (or database_password) with '\"sensitive\": true'"
+      },
+      {
+        "description": "SLACK_TOKEN detected as sensitive (matches *_TOKEN pattern)",
+        "check": "output_file_content",
+        "file": "manifest.json",
+        "criteria": "user_config must have an entry for SLACK_TOKEN (or slack_token) with '\"sensitive\": true'"
+      },
+      {
+        "description": "LOG_LEVEL is not marked sensitive and has a default or is not required (has fallback 'info')",
+        "check": "output_file_content",
+        "file": "manifest.json",
+        "criteria": "user_config entry for LOG_LEVEL must NOT have '\"sensitive\": true' and should either have '\"required\": false' or not be marked required"
+      },
+      {
+        "description": "mcp_config.env references user_config vars with ${user_config.*} substitution syntax",
+        "check": "output_file_content",
+        "file": "manifest.json",
+        "criteria": "mcp_config.env must use '${user_config.OPENAI_API_KEY}' or similar substitution syntax for sensitive variables"
+      }
+    ]
+  },
+  {
+    "id": "no-mcp-server-found",
+    "prompt": "Create an MCPB bundle for this project.",
+    "expected_output": "Skill detects no MCP server and asks the user whether to scaffold or point to an entry file",
+    "files": {
+      "package.json": "{\n  \"name\": \"my-cool-app\",\n  \"version\": \"1.0.0\",\n  \"description\": \"A regular web application\",\n  \"main\": \"index.js\",\n  \"dependencies\": {\n    \"express\": \"^4.18.0\"\n  }\n}",
+      "index.js": "const express = require('express');\nconst app = express();\napp.get('/', (req, res) => res.send('Hello'));\napp.listen(3000);"
+    },
+    "deterministic_checks": [
+      {
+        "type": "file_not_exists",
+        "file": "manifest.json"
+      }
+    ],
+    "expectations": [
+      {
+        "description": "Skill reports that no MCP server was detected in the project",
+        "check": "transcript_contains",
+        "criteria": "Output must indicate that no MCP server implementation was found (e.g., 'No MCP server found' or equivalent)"
+      },
+      {
+        "description": "Skill offers to scaffold a new MCP server (option 1)",
+        "check": "transcript_contains",
+        "criteria": "Output must offer to scaffold or create a new MCP server as one option"
+      },
+      {
+        "description": "Skill offers to let the user point to the entry file (option 2)",
+        "check": "transcript_contains",
+        "criteria": "Output must offer to let the user specify or point to the server entry file as another option"
+      }
+    ]
+  },
+  {
+    "id": "idempotent-rerun",
+    "prompt": "I already have an MCPB bundle set up but I've added a new tool called 'delete_item' to my server. Run /mcp-bundle:mcpb again to update the manifest.",
+    "expected_output": "Updates existing manifest.json rather than creating a duplicate, preserves existing fields, adds the new tool",
+    "files": {
+      "package.json": "{\n  \"name\": \"item-manager-mcp\",\n  \"version\": \"1.1.0\",\n  \"description\": \"MCP server for item management\",\n  \"author\": \"Test User\",\n  \"license\": \"MIT\",\n  \"main\": \"src/index.js\",\n  \"dependencies\": {\n    \"@modelcontextprotocol/sdk\": \"^1.0.0\"\n  }\n}",
+      "manifest.json": "{\n  \"manifest_version\": \"0.3\",\n  \"name\": \"item-manager-mcp\",\n  \"display_name\": \"Item Manager\",\n  \"version\": \"1.0.0\",\n  \"description\": \"MCP server for item management\",\n  \"author\": {\n    \"name\": \"Test User\"\n  },\n  \"server\": {\n    \"type\": \"node\",\n    \"entry_point\": \"src/index.js\",\n    \"mcp_config\": {\n      \"command\": \"node\",\n      \"args\": [\"${__dirname}/src/index.js\"]\n    }\n  },\n  \"tools\": [\n    {\"name\": \"list_items\", \"description\": \"List all items\"},\n    {\"name\": \"get_item\", \"description\": \"Get a single item by ID\"}\n  ],\n  \"keywords\": [\"items\", \"management\"],\n  \"license\": \"MIT\",\n  \"compatibility\": {\n    \"platforms\": [\"darwin\", \"win32\", \"linux\"],\n    \"runtimes\": {\"node\": \">=20.0.0\"}\n  }\n}",
+      "src/index.js": "import { Server } from '@modelcontextprotocol/sdk/server';\nimport { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio';\n\nconst server = new Server({ name: 'item-manager-mcp', version: '1.1.0' });\n\nserver.setRequestHandler('tools/list', async () => ({\n  tools: [\n    { name: 'list_items', description: 'List all items' },\n    { name: 'get_item', description: 'Get a single item by ID' },\n    { name: 'delete_item', description: 'Delete an item by ID' }\n  ]\n}));\n\nconst transport = new StdioServerTransport();\nawait server.connect(transport);"
+    },
+    "deterministic_checks": [
+      {
+        "type": "json_valid",
+        "file": "manifest.json"
+      },
+      {
+        "type": "json_field_equals",
+        "file": "manifest.json",
+        "field": ".version",
+        "expected": "1.1.0"
+      },
+      {
+        "type": "json_field_count",
+        "file": "manifest.json",
+        "field": ".tools",
+        "op": "eq",
+        "expected": 3
+      },
+      {
+        "type": "json_array_contains",
+        "file": "manifest.json",
+        "field": ".tools",
+        "match": { "name": "delete_item" }
+      },
+      {
+        "type": "json_array_contains",
+        "file": "manifest.json",
+        "field": ".tools",
+        "match": { "name": "list_items" }
+      },
+      {
+        "type": "json_array_contains",
+        "file": "manifest.json",
+        "field": ".tools",
+        "match": { "name": "get_item" }
+      },
+      {
+        "type": "json_field_equals",
+        "file": "manifest.json",
+        "field": ".display_name",
+        "expected": "Item Manager"
+      },
+      {
+        "type": "file_not_exists",
+        "file": "manifest.json.bak"
+      }
+    ],
+    "expectations": [
+      {
+        "description": "Existing keywords are preserved, not reset to defaults",
+        "check": "output_file_content",
+        "file": "manifest.json",
+        "criteria": "keywords array must still contain 'items' and 'management'"
+      }
+    ]
+  },
+  {
+    "id": "name-sanitization",
+    "prompt": "Create an MCPB bundle for this project please.",
+    "expected_output": "Generates manifest.json with sanitized name - lowercase, hyphenated, no spaces or special chars",
+    "files": {
+      "package.json": "{\n  \"name\": \"My Cool MCP_Server!!\",\n  \"version\": \"0.1.0\",\n  \"description\": \"A server with a messy name\",\n  \"author\": \"Dev Person\",\n  \"license\": \"MIT\",\n  \"main\": \"index.js\",\n  \"dependencies\": {\n    \"@modelcontextprotocol/sdk\": \"^1.0.0\"\n  }\n}",
+      "index.js": "import { Server } from '@modelcontextprotocol/sdk/server';\nimport { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio';\n\nconst server = new Server({ name: 'my-server', version: '0.1.0' });\nserver.setRequestHandler('tools/list', async () => ({\n  tools: [{ name: 'hello', description: 'Say hello' }]\n}));\nconst transport = new StdioServerTransport();\nawait server.connect(transport);"
+    },
+    "deterministic_checks": [
+      {
+        "type": "json_valid",
+        "file": "manifest.json"
+      },
+      {
+        "type": "json_field_matches",
+        "file": "manifest.json",
+        "field": ".name",
+        "pattern": "^[a-z0-9][a-z0-9-]*$"
+      },
+      {
+        "type": "file_exists",
+        "file": ".mcpbignore"
+      },
+      {
+        "type": "file_contains",
+        "file": ".mcpbignore",
+        "literal": "node_modules/"
+      },
+      {
+        "type": "file_contains",
+        "file": ".mcpbignore",
+        "literal": ".git/"
+      }
+    ],
+    "expectations": [
+      {
+        "description": "display_name is human-friendly (can have mixed case and spaces)",
+        "check": "output_file_content",
+        "file": "manifest.json",
+        "criteria": "display_name field should be a human-readable version like 'My Cool MCP Server' (not the sanitized machine name)"
+      },
+      {
+        "description": ".mcpbignore file has comprehensive exclusion patterns beyond the basics",
+        "check": "output_file_content",
+        "file": ".mcpbignore",
+        "criteria": "Must contain comprehensive patterns including at minimum: '.git/', 'tests/', '.env', '__pycache__/', 'node_modules/' exclusion patterns"
+      }
+    ]
+  },
+  {
+    "id": "binary-server-go",
+    "prompt": "Package this Go-based MCP server as an MCPB bundle. The binary gets compiled to bin/mcp-server.",
+    "expected_output": "Generates manifest.json with binary server type, manifest_version 0.3, correct entry point",
+    "files": {
+      "go.mod": "module github.com/example/db-query-mcp\n\ngo 1.22\n\nrequire github.com/mark3labs/mcp-go v0.6.0",
+      "main.go": "package main\n\nimport (\n\t\"github.com/mark3labs/mcp-go/mcp\"\n\t\"github.com/mark3labs/mcp-go/server\"\n\t\"os\"\n)\n\nfunc main() {\n\tdbURL := os.Getenv(\"DATABASE_URL\")\n\tdbSecret := os.Getenv(\"DB_SECRET\")\n\ts := server.NewMCPServer(\"db-query-mcp\", \"1.0.0\")\n\ts.AddTool(mcp.NewTool(\"run_query\", mcp.WithDescription(\"Execute a SQL query\")), handleQuery)\n\ts.AddTool(mcp.NewTool(\"list_tables\", mcp.WithDescription(\"List database tables\")), handleListTables)\n\tserver.ServeStdio(s)\n}",
+      "bin/.gitkeep": ""
+    },
+    "deterministic_checks": [
+      {
+        "type": "json_valid",
+        "file": "manifest.json"
+      },
+      {
+        "type": "json_field_equals",
+        "file": "manifest.json",
+        "field": ".manifest_version",
+        "expected": "0.3"
+      },
+      {
+        "type": "json_field_equals",
+        "file": "manifest.json",
+        "field": ".server.type",
+        "expected": "binary"
+      },
+      {
+        "type": "json_array_contains",
+        "file": "manifest.json",
+        "field": ".tools",
+        "match": { "name": "run_query" }
+      },
+      {
+        "type": "json_array_contains",
+        "file": "manifest.json",
+        "field": ".tools",
+        "match": { "name": "list_tables" }
+      }
+    ],
+    "expectations": [
+      {
+        "description": "Entry point references the binary at bin/mcp-server",
+        "check": "output_file_content",
+        "file": "manifest.json",
+        "criteria": "server.entry_point must reference 'bin/mcp-server' or 'server/mcp-server' or similar binary path"
+      },
+      {
+        "description": "DB_SECRET detected as sensitive in user_config (matches *_SECRET pattern)",
+        "check": "output_file_content",
+        "file": "manifest.json",
+        "criteria": "user_config must contain a DB_SECRET entry with '\"sensitive\": true'"
+      },
+      {
+        "description": "Name derived from go.mod module path as 'db-query-mcp'",
+        "check": "output_file_content",
+        "file": "manifest.json",
+        "criteria": "name field should be 'db-query-mcp' (derived from go.mod module path)"
+      }
+    ]
+  }
+]
